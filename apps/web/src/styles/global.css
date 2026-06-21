@@ -1,0 +1,245 @@
+@import "tailwindcss";
+
+:root {
+/* ─── BACKGROUND LAYERS ─────────────────────────────────────────────── */
+--bg-void:          #070b14;
+--bg-base:          #0a0e1a;
+--bg-surface:       #111827;
+--bg-raised:        #1a2236;
+--bg-overlay:       #1e293b;
+--bg-scrim:         rgba(7, 11, 20, 0.85);
+
+/* ─── BORDER SYSTEM ──────────────────────────────────────────────────── */
+--border-dim:       rgba(255,255,255,0.04);
+--border-subtle:    rgba(255,255,255,0.07);
+--border-mid:       rgba(255,255,255,0.12);
+--border-strong:    rgba(255,255,255,0.20);
+--border-teal:      rgba(0, 212, 200, 0.40);
+--border-danger:    rgba(239, 68,  68,  0.40);
+--border-warning:   rgba(245, 158, 11,  0.40);
+--border-success:   rgba(34,  197, 94,  0.40);
+
+/* ─── ACCENT ─────────────────────────────────────────────────────────── */
+--teal-100:         #ccfaf8;
+--teal-200:         #99f4f0;
+--teal-300:         #5de8e2;
+--teal-400:         #00d4c8;
+--teal-500:         #00b5a8;
+--teal-600:         #008f86;
+--teal-700:         #006b64;
+--teal-glow-xs:     rgba(0, 212, 200, 0.05);
+--teal-glow-sm:     rgba(0, 212, 200, 0.08);
+--teal-glow-md:     rgba(0, 212, 200, 0.12);
+--teal-glow-lg:     rgba(0, 212, 200, 0.18);
+
+/* ─── SEMANTIC ───────────────────────────────────────────────────────── */
+--danger-400:       #ef4444;
+--danger-300:       #f87171;
+--danger-200:       #fca5a5;
+--danger-bg-sm:     rgba(239, 68,  68,  0.08);
+--danger-bg-md:     rgba(239, 68,  68,  0.14);
+--danger-bg-lg:     rgba(239, 68,  68,  0.20);
+--danger-border:    rgba(239, 68,  68,  0.35);
+--warning-400:      #f59e0b;
+--warning-300:      #fbbf24;
+--warning-200:      #fcd34d;
+--warning-bg-sm:    rgba(245, 158, 11,  0.08);
+--warning-bg-md:    rgba(245, 158, 11,  0.14);
+--warning-border:   rgba(245, 158, 11,  0.35);
+--success-400:      #22c55e;
+--success-300:      #4ade80;
+--success-200:      #86efac;
+--success-bg-sm:    rgba(34,  197, 94,  0.08);
+--success-bg-md:    rgba(34,  197, 94,  0.14);
+--success-border:   rgba(34,  197, 94,  0.35);
+--info-400:         #3b82f6;
+--info-300:         #60a5fa;
+--info-bg-sm:       rgba(59,  130, 246, 0.08);
+--info-bg-md:       rgba(59,  130, 246, 0.14);
+--info-border:      rgba(59,  130, 246, 0.35);
+
+/* ─── TEXT ───────────────────────────────────────────────────────────── */
+--text-primary:     #f1f5f9;
+--text-secondary:   #94a3b8;
+--text-tertiary:    #64748b;
+--text-quaternary:  #475569;
+--text-disabled:    #2d3748;
+--text-teal:        #00d4c8;
+--text-teal-muted:  #5de8e2;
+--text-danger:      #f87171;
+--text-warning:     #fbbf24;
+--text-success:     #4ade80;
+--text-info:        #60a5fa;
+
+/* ─── SPECIAL ────────────────────────────────────────────────────────── */
+--grid-line:        rgba(255,255,255,0.03);
+--shimmer-base:     rgba(255,255,255,0.04);
+--shimmer-shine:    rgba(255,255,255,0.08);
+--font-sans:        'DM Sans', system-ui, -apple-system, sans-serif;
+--font-mono:        'Space Mono', monospace;
+
+/* ─── SPACING ────────────────────────────────────────────────────────── */
+--sp-1:  4px;  --sp-2:  8px;  --sp-3:  12px; --sp-4:  16px;
+--sp-5:  20px; --sp-6:  24px; --sp-8:  32px; --sp-10: 40px;
+--sp-12: 48px; --sp-16: 64px; --sp-20: 80px;
+
+/* ─── RADII ──────────────────────────────────────────────────────────── */
+--r-sm:   4px;  --r-md:   6px;  --r-lg:   10px;
+--r-xl:   14px; --r-2xl:  20px; --r-full: 9999px;
+
+/* ─── Z-INDEX ────────────────────────────────────────────────────────── */
+--z-base: 0; --z-raised: 10; --z-sticky: 50; --z-navbar: 100;
+--z-dropdown: 200; --z-tooltip: 300; --z-modal-back: 400; --z-modal: 500; --z-toast: 600;
+
+/* ─── SHADOWS ────────────────────────────────────────────────────────── */
+--shadow-sm:   0 1px 3px rgba(0,0,0,0.4), 0 1px 2px rgba(0,0,0,0.3);
+--shadow-md:   0 4px 12px rgba(0,0,0,0.5), 0 2px 4px rgba(0,0,0,0.3);
+--shadow-teal: 0 0 0 3px rgba(0,212,200,0.25);
+--shadow-input-focus: 0 0 0 2px rgba(0,212,200,0.35);
+
+/* ─── LEGACY TOKENS (keep for backward compat) ──────────────────────── */
+--color-bg: var(--bg-void);
+--color-surface: var(--bg-base);
+--color-surface-hover: var(--bg-surface);
+--color-border: var(--border-subtle);
+--color-border-hover: var(--border-mid);
+--color-text: var(--text-primary);
+--color-text-muted: var(--text-secondary);
+--color-primary: var(--teal-400);
+--color-primary-hover: var(--teal-500);
+--color-accent: var(--teal-300);
+--color-green: var(--success-400);
+--color-red: var(--danger-400);
+--color-yellow: var(--warning-400);
+--radius: var(--r-md);
+--radius-lg: var(--r-lg);
+--shadow: var(--shadow-sm);
+--font: var(--font-sans);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-size: 16px;
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-void);
+  color: var(--text-primary);
+  line-height: 1.6;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--text-teal);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+button { cursor: pointer; font-family: inherit; }
+input, textarea, select { font-family: inherit; font-size: inherit; }
+
+/* ─── GRID BACKGROUND ────────────────────────────────────────────────── */
+.bg-grid {
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 48px 48px;
+  background-position: center center;
+}
+
+/* ─── SHIMMER ────────────────────────────────────────────────────────── */
+@keyframes shimmer {
+  0%   { left: -100% }
+  100% { left: 200%  }
+}
+
+.skeleton {
+  background: var(--shimmer-base);
+  border-radius: var(--r-md);
+  position: relative;
+  overflow: hidden;
+}
+.skeleton::after {
+  content: '';
+  position: absolute;
+  top: 0; left: -100%;
+  width: 100%; height: 100%;
+  background: linear-gradient(90deg, transparent 0%, var(--shimmer-shine) 50%, transparent 100%);
+  animation: shimmer 1.8s ease-in-out infinite;
+}
+
+/* ─── SKELETON VARIANTS ──────────────────────────────────────────────── */
+.skel-text-sm { height: 10px; border-radius: var(--r-sm); }
+.skel-text-md { height: 12px; border-radius: var(--r-sm); }
+.skel-text-lg { height: 16px; border-radius: var(--r-sm); }
+.skel-title   { height: 20px; width: 50%; border-radius: var(--r-sm); }
+.skel-badge   { height: 20px; width: 56px; border-radius: var(--r-full); }
+.skel-avatar  { width: 40px; height: 40px; border-radius: 50%; }
+.skel-card    { height: 220px; border-radius: var(--r-lg); }
+.skel-icon    { width: 34px; height: 34px; border-radius: var(--r-md); }
+
+/* ─── ANIMATIONS ──────────────────────────────────────────────────────── */
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.4; }
+}
+
+@keyframes spin-ring {
+  0%   { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes ripple {
+  0%   { transform: scale(1); opacity: 0.4; }
+  100% { transform: scale(1.8); opacity: 0; }
+}
+
+@keyframes count-up {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── UTILITIES ──────────────────────────────────────────────────────── */
+.container { max-width: 1280px; margin: 0 auto; padding: 0 var(--sp-6); }
+.container-full { width: 100vw; }
+.text-mono { font-family: var(--font-mono); }
+.text-sans { font-family: var(--font-sans); }
+.truncate-hash { font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-tertiary); }
+
+.text-sm  { font-size: 0.875rem; }
+.text-xs  { font-size: 0.75rem; }
+.text-muted { color: var(--text-secondary); }
+
+.flex { display: flex; }
+.flex-wrap { flex-wrap: wrap; }
+.items-center { align-items: center; }
+.justify-between { justify-content: space-between; }
+.gap-1 { gap: var(--sp-1); }
+.gap-2 { gap: var(--sp-2); }
+.gap-3 { gap: var(--sp-3); }
+.gap-4 { gap: var(--sp-4); }
+.mt-1 { margin-top: var(--sp-1); }
+.mt-2 { margin-top: var(--sp-2); }
+.mt-3 { margin-top: var(--sp-3); }
+.mt-4 { margin-top: var(--sp-4); }
+.mt-6 { margin-top: var(--sp-6); }
+.mt-8 { margin-top: var(--sp-8); }
+.mb-2 { margin-bottom: var(--sp-2); }
+.mb-4 { margin-bottom: var(--sp-4); }
+.mb-8 { margin-bottom: var(--sp-8); }
+
+@media (max-width: 768px) {
+  .container { padding: 0 var(--sp-4); }
+}

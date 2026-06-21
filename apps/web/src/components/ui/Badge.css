@@ -1,0 +1,64 @@
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: var(--r-full);
+  border: 0.5px solid;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.badge-verified {
+  background: var(--success-bg-sm);
+  color: var(--success-300);
+  border-color: var(--success-border);
+}
+
+.badge-tampered {
+  background: var(--danger-bg-md);
+  color: var(--danger-300);
+  border-color: var(--danger-border);
+}
+
+.badge-pending {
+  background: var(--warning-bg-sm);
+  color: var(--warning-300);
+  border-color: var(--warning-border);
+}
+
+.badge-free {
+  background: var(--teal-glow-sm);
+  color: var(--teal-300);
+  border-color: var(--border-teal);
+}
+
+.badge-paid {
+  background: var(--info-bg-sm);
+  color: var(--info-300);
+  border-color: var(--info-border);
+}
+
+.badge-subscription {
+  background: rgba(139, 92, 246, 0.1);
+  color: #c4b5fd;
+  border-color: rgba(139, 92, 246, 0.35);
+}
+
+.badge-version {
+  background: var(--bg-raised);
+  color: var(--text-tertiary);
+  border-color: var(--border-subtle);
+  font-family: var(--font-mono);
+}
+
+.badge-network {
+  background: var(--teal-glow-sm);
+  color: var(--teal-400);
+  border-color: var(--border-teal);
+  font-family: var(--font-mono);
+  padding: 3px 8px;
+}

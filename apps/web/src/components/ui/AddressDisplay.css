@@ -1,0 +1,59 @@
+.addr-display {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-tertiary);
+}
+
+.addr-truncated {
+  cursor: default;
+}
+
+.addr-copy {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: var(--r-md);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 150ms ease;
+  padding: 0;
+}
+
+.addr-display:hover .addr-copy {
+  opacity: 1;
+}
+
+.addr-copy:hover {
+  background: var(--bg-raised);
+  color: var(--text-secondary);
+}
+
+.addr-copy svg {
+  width: 12px;
+  height: 12px;
+}
+
+.addr-link {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  color: var(--text-teal);
+  text-decoration: none;
+  margin-left: 2px;
+}
+
+.addr-link:hover {
+  text-decoration: underline;
+}
+
+.addr-prefix {
+  color: var(--text-quaternary);
+}

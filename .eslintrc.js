@@ -1,0 +1,10 @@
+module.exports = {
+  root: true,
+  env: {
+    browser: true,
+    node: true,
+    es2022: true,
+  },
+  extends: ['eslint:recommended'],
+  ignorePatterns: ['dist', 'build', 'coverage', 'node_modules'],
+};

@@ -1,0 +1,149 @@
+.pt {
+  width: 100%;
+  position: relative;
+}
+
+.pt-line {
+  position: absolute;
+  left: 20px;
+  top: 16px;
+  bottom: 16px;
+  width: 1px;
+  background: var(--border-subtle);
+}
+
+.pt-row {
+  display: flex;
+  gap: 16px;
+  padding: 12px 0;
+  position: relative;
+}
+
+.pt-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--bg-base);
+  position: absolute;
+  left: 15px;
+  top: 18px;
+  z-index: 1;
+}
+
+.pt-dot-latest {
+  width: 14px;
+  height: 14px;
+  left: 13px;
+  top: 16px;
+}
+
+.pt-ripple {
+  position: absolute;
+  left: 11px;
+  top: 14px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid;
+  animation: pt-ripple 2s ease-out infinite;
+}
+
+@keyframes pt-ripple {
+  0% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  100% {
+    transform: scale(2.5);
+    opacity: 0;
+  }
+}
+
+.pt-content {
+  padding: 10px 14px;
+  border-radius: var(--r-md);
+  margin-left: 44px;
+  flex: 1;
+  min-width: 0;
+}
+
+.pt-content-tampered {
+  background: var(--danger-bg-sm);
+  border-left: 2px solid var(--danger-400);
+}
+
+.pt-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.pt-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pt-ts {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.pt-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  color: var(--text-teal);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.pt-link:hover {
+  text-decoration: underline;
+}
+
+.pt-details {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pt-detail {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.pt-detail-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  width: 80px;
+  flex-shrink: 0;
+  font-family: var(--font-sans);
+}
+
+.pt-detail-notes {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.pt-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  gap: 12px;
+  color: var(--text-tertiary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+}
