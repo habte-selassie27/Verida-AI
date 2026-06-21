@@ -1,0 +1,12 @@
+{
+  "buildCommand": "npm run build --workspace @verida/shared && npm run build --workspace @verida/web",
+  "outputDirectory": "apps/web/dist",
+  "framework": "vite",
+  "installCommand": "npm install",
+  "rewrites": [
+    {
+      "source": "/((?!assets/).*)",
+      "destination": "/index.html"
+    }
+  ]
+}
