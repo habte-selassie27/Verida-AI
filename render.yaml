@@ -29,14 +29,3 @@ services:
         value: testnet
     healthCheckPath: /healthz
     autoDeploy: true
-
-  - type: postgres
-    name: verida-db
-    plan: starter
-    databaseName: verida_ai
-    ipAllowList: []
-
-  - type: redis
-    name: verida-redis
-    plan: starter
-    ipAllowList: []
