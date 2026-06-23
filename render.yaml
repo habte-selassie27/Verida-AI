@@ -5,6 +5,7 @@ services:
     plan: starter
     buildCommand: npm ci && npm run build --workspace=@verida/shared && npm run build --workspace=@verida/api
     startCommand: cd apps/api && node dist/index.js
+    preStartCommand: cd apps/api && npx drizzle-kit push --config=../../drizzle.config.ts
     envVars:
       - key: NODE_ENV
         value: production

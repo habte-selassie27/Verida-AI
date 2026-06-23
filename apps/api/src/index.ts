@@ -19,6 +19,7 @@ import { eq, sql } from 'drizzle-orm';
 
 import { client as dbClient, db } from './lib/db/index.js';
 import { accessSessions, datasets } from './lib/db/schema.js';
+import { runMigrations } from './lib/db/migrate.js';
 import { isShelbyAvailable } from './lib/shelby/client.js';
 import { closeUploadQueue } from './lib/queue/queue.js';
 import { closeUploadWorker, UploadWorker } from './lib/queue/workers/uploadWorker.js';
@@ -200,6 +201,15 @@ async function shutdown(server?: ReturnType<typeof app.listen>): Promise<void> {
 
 async function startServer(): Promise<void> {
   const port = getServerPort();
+
+  // Run database migrations before starting the server
+  try {
+    await runMigrations();
+    console.log('Database migrations completed.');
+  } catch (cause: unknown) {
+    console.error('Database migration failed.', cause);
+    process.exit(1);
+  }
 
   const httpServer = createServer(app);
   createUploadProgressWebSocketServer(httpServer);
