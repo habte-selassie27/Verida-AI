@@ -20,9 +20,12 @@ function WalletContextInner({ children }: { children: ReactNode }) {
     async function fetchNetwork() {
       try {
         const wallet = wallets.find((w) => w.name.toLowerCase().includes('petra'));
-        if (wallet) {
-          const net = await wallet?.adapter?.network?.();
-          if (net?.name) setNetworkName(net.name);
+        if (wallet && 'network' in wallet) {
+          const networkFunc = (wallet as { network?: () => Promise<{ name?: string }> }).network;
+          if (networkFunc) {
+            const net = await networkFunc();
+            if (net?.name) setNetworkName(net.name);
+          }
         }
       } catch { /* ignore */ }
     }
@@ -34,8 +37,9 @@ function WalletContextInner({ children }: { children: ReactNode }) {
 
     const preferred = ['Petra', 'Martian', 'Pontem'];
     const target = preferred.find((name) => wallets.some((w) => w.name === name))
-      ?? wallets[0].name;
+      ?? wallets[0]?.name;
 
+    if (!target) throw new Error('No wallet found');
     await adapterConnect(target);
   }, [wallets, adapterConnect]);
 

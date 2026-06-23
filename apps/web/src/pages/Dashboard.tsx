@@ -3,8 +3,9 @@ import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { AddressDisplay } from '../components/ui/AddressDisplay';
-import { listDatasets } from '../api/client';
+import { listDatasets, getStats } from '../api/client';
 import type { Dataset } from '@verida/shared';
+import type { StatsResponse } from '../api/client';
 import { useWalletContext } from '../context/WalletContext';
 import './Dashboard.css';
 
@@ -59,16 +60,24 @@ function CheckIcon() {
 
 export default function Dashboard() {
   const [datasets, setDatasets] = useState<Dataset[]>([]);
+  const [stats, setStats] = useState<StatsResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const { connected, address } = useWalletContext();
 
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
+      setError(null);
       try {
-        const result = await listDatasets({ page: 1, limit: 100 });
-        setDatasets(result.items);
-      } catch {
+        const [datasetsResult, statsResult] = await Promise.all([
+          listDatasets({ page: 1, limit: 100 }),
+          getStats().catch(() => null),
+        ]);
+        setDatasets(datasetsResult.items);
+        setStats(statsResult);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load dashboard data');
         setDatasets([]);
       } finally {
         setLoading(false);
@@ -78,8 +87,8 @@ export default function Dashboard() {
   }, []);
 
   const totalDatasets = datasets.length;
-  const totalAccesses = '—';
-  const verifiedCount = datasets.filter((d) => d.verified === true).length;
+  const totalAccesses = stats?.totalAccesses ?? '—';
+  const verifiedCount = stats?.verified ?? datasets.filter((d) => d.verified === true).length;
   const totalRevenue = '—';
 
   const recentDatasets = datasets.slice(0, 4).map((ds) => ({

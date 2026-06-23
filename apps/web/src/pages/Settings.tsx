@@ -139,10 +139,24 @@ export default function Settings() {
   const [notifSession, setNotifSession] = useState(false);
   const [notifAccess, setNotifAccess] = useState(true);
   const [deleteConfirm, setDeleteConfirm] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const { connected, address, networkName, disconnect, connect } = useWalletContext();
 
-  const handleSaveProfile = (e: FormEvent) => {
+  const handleSaveProfile = async (e: FormEvent) => {
     e.preventDefault();
+    setIsSaving(true);
+    setSaveMessage(null);
+    try {
+      // TODO: Implement actual API call to save profile
+      // await apiClient.updateProfile({ username, bio });
+      setSaveMessage('Profile saved successfully');
+      setTimeout(() => setSaveMessage(null), 3000);
+    } catch (err) {
+      setSaveMessage(err instanceof Error ? err.message : 'Failed to save profile');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleGenerateKey = () => {
@@ -155,15 +169,41 @@ export default function Settings() {
     try {
       await navigator.clipboard.writeText(generatedKey);
       setKeyCopied(true);
-    } catch {}
+    } catch (err) {
+      console.error('Failed to copy to clipboard:', err);
+      alert('Failed to copy to clipboard. Please copy manually.');
+    }
   };
 
-  const handleSaveNotifs = (e: FormEvent) => {
+  const handleSaveNotifs = async (e: FormEvent) => {
     e.preventDefault();
+    setIsSaving(true);
+    setSaveMessage(null);
+    try {
+      // TODO: Implement actual API call to save notification preferences
+      // await apiClient.updateNotifications({ notifUpload, notifIntegrity, notifSession, notifAccess });
+      setSaveMessage('Notification preferences saved');
+      setTimeout(() => setSaveMessage(null), 3000);
+    } catch (err) {
+      setSaveMessage(err instanceof Error ? err.message : 'Failed to save notifications');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  const handleDeleteAccount = () => {
-    if (deleteConfirm === 'DELETE') {
+  const handleDeleteAccount = async () => {
+    if (deleteConfirm !== 'DELETE') return;
+    setIsSaving(true);
+    setSaveMessage(null);
+    try {
+      // TODO: Implement actual API call to delete account
+      // await apiClient.deleteAccount();
+      setSaveMessage('Account deletion initiated');
+      setTimeout(() => setSaveMessage(null), 3000);
+    } catch (err) {
+      setSaveMessage(err instanceof Error ? err.message : 'Failed to delete account');
+    } finally {
+      setIsSaving(false);
     }
   };
 

@@ -160,5 +160,18 @@ export async function uploadDataset(formData: FormData): Promise<UploadResponse>
 }
 
 export function getStreamUrl(datasetId: number, sessionId: string): string {
-  return `${API_BASE}/api/datasets/${datasetId}/stream`;
+  return `${API_BASE}/api/datasets/${datasetId}/stream?sessionId=${encodeURIComponent(sessionId)}`;
+}
+
+export interface StatsResponse {
+  totalDatasets: number;
+  totalAccesses: number;
+  verified: number;
+  shelbySize: number;
+  latency: number;
+  uptime: number;
+}
+
+export async function getStats(): Promise<StatsResponse> {
+  return request<StatsResponse>('/api/stats/live');
 }

@@ -294,9 +294,9 @@ export default function Upload() {
         setUploading(false);
         setReceipt({
           jobId: result.jobId,
-          blobId: result.dataset?.shelby_blob_id ?? `dev_${result.jobId}`,
-          merkleRoot: result.dataset?.merkle_root ?? `0x${Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('')}`,
-          txHash: result.dataset?.provenance_receipt?.txHash ?? `0x${Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('')}`,
+          blobId: result.dataset?.shelby_blob_id ?? 'Pending (dev mode)',
+          merkleRoot: result.dataset?.merkle_root ?? 'Pending (dev mode)',
+          txHash: result.dataset?.provenance_receipt?.txHash ?? 'Pending (dev mode)',
           uploadedAt: new Date().toLocaleString(),
           chunks: 16,
         });

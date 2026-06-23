@@ -32,7 +32,18 @@ declare module 'multer' {
     ) => void;
   }
 
-  interface StorageEngine {}
+  interface StorageEngine {
+    _handleFile(
+      request: Request,
+      file: Express.Multer.File,
+      callback: (error: Error | null, info: Partial<Express.Multer.File>) => void,
+    ): void;
+    _removeFile(
+      request: Request,
+      file: Express.Multer.File,
+      callback: (error: Error | null) => void,
+    ): void;
+  }
 
   interface MulterError extends Error {
     code: string;

@@ -17,7 +17,7 @@ import { z } from 'zod';
 import { eq, sql } from 'drizzle-orm';
 
 import { client as dbClient, db } from './lib/db/index.js';
-import { datasets } from './lib/db/schema.js';
+import { accessSessions, datasets } from './lib/db/schema.js';
 import { closeUploadQueue } from './lib/queue/queue.js';
 import { closeUploadWorker, UploadWorker } from './lib/queue/workers/uploadWorker.js';
 import { closeVerifyWorker, VerifyWorker } from './lib/queue/workers/verifyWorker.js';
@@ -80,12 +80,28 @@ app.get('/api/stats/live', asyncHandler(async (_request: Request, response: Resp
 
   const verified = Number(verifiedRow?.count ?? 0);
 
+  const [accessRow] = await db
+    .select({
+      count: sql<number>`count(*)`,
+    })
+    .from(accessSessions);
+
+  const totalAccesses = Number(accessRow?.count ?? 0);
+
+  const [sizeRow] = await db
+    .select({
+      total: sql<number>`coalesce(sum(size_bytes), 0)`,
+    })
+    .from(datasets);
+
+  const shelbySize = Number(sizeRow?.total ?? 0);
+
   response.json({
     data: {
       totalDatasets,
       verified,
-      totalAccesses: 0,
-      shelbySize: 0,
+      totalAccesses,
+      shelbySize,
       latency: 42,
       uptime: 99.97,
     },

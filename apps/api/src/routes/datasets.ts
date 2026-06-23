@@ -12,7 +12,7 @@ import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 
 import type { SQL } from 'drizzle-orm';
-import { and, asc, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, sql } from 'drizzle-orm';
 import { Router, type Request, type Response } from 'express';
 import asyncHandler from 'express-async-handler';
 import multer from 'multer';
@@ -30,6 +30,10 @@ import {
 } from '../lib/queue/queue.js';
 import { ShelbyAccessError, streamDataset, validateSession } from '../lib/shelby/index.js';
 import { streamRateLimit, uploadRateLimit } from '../middleware/rateLimit.js';
+
+function escapeLikeWildcards(input: string): string {
+  return input.replace(/[%_]/g, (char) => `\\${char}`);
+}
 
 type QueryValue = string | string[] | undefined;
 
@@ -86,6 +90,7 @@ const listQuerySchema = z.object({
   search: z.string().trim().min(1).optional(),
   sort: z.string().trim().min(1).optional(),
   tag: z.nativeEnum(DatasetTag).optional(),
+  tags: z.string().trim().optional(),
 });
 
 const uploadBodySchema = z
@@ -721,9 +726,17 @@ datasetsRouter.get(
       filters.push(sql`${datasets.tags} @> ARRAY[${query.tag}]::text[]`);
     }
 
+    if (query.tags !== undefined) {
+      const tagList = query.tags.split(',').map((t) => t.trim()).filter(Boolean);
+      if (tagList.length > 0) {
+        filters.push(sql`${datasets.tags} @> ARRAY[${sql.join(tagList, sql`, `)}]::text[]`);
+      }
+    }
+
     if (query.search !== undefined) {
+      const escapedSearch = escapeLikeWildcards(query.search);
       filters.push(
-        sql`(${datasets.name} ILIKE ${'%' + query.search + '%'} OR ${datasets.description} ILIKE ${'%' + query.search + '%'})`,
+        sql`(${datasets.name} ILIKE ${'%' + escapedSearch + '%'} OR ${datasets.description} ILIKE ${'%' + escapedSearch + '%'})`,
       );
     }
 
@@ -736,13 +749,30 @@ datasetsRouter.get(
     }
 
     const whereClause = filters.length > 0 ? and(...filters) : undefined;
-    const orderByClause = query.sort === 'largest'
-      ? desc(datasets.sizeBytes)
-      : query.sort === 'most_accessed'
-        ? desc(datasets.createdAt)
-        : desc(datasets.createdAt);
-    const selectQuery = db
+
+    let orderByClause;
+    let needsAccessCountJoin = false;
+    const accessCountSubquery = db
       .select({
+        datasetId: accessSessions.datasetId,
+        accessCount: count(accessSessions.id).as('access_count'),
+      })
+      .from(accessSessions)
+      .groupBy(accessSessions.datasetId)
+      .as('access_counts');
+
+    if (query.sort === 'largest') {
+      orderByClause = desc(datasets.sizeBytes);
+    } else if (query.sort === 'most_accessed') {
+      needsAccessCountJoin = true;
+      orderByClause = desc(sql`COALESCE(${accessCountSubquery.accessCount}, 0)`);
+    } else {
+      orderByClause = desc(datasets.createdAt);
+    }
+
+    let selectQuery = db
+      .select({
+        access_count: sql<string>`COALESCE(${accessCountSubquery.accessCount}, 0)`,
         access_type: datasets.accessType,
         created_at: datasets.createdAt,
         description: datasets.description,
@@ -761,6 +791,7 @@ datasetsRouter.get(
         version: datasets.version,
       })
       .from(datasets)
+      .leftJoin(accessCountSubquery, eq(datasets.id, accessCountSubquery.datasetId))
       .orderBy(orderByClause)
       .limit(query.limit)
       .offset(offset);
