@@ -5,6 +5,7 @@
 // DB TABLES: None directly; delegates DB reads/writes to route and queue modules.
 // HANDOFF TO TESTER: Verify middleware order, mounted route paths, health checks, and graceful shutdown behavior.
 
+import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 
 import cors from 'cors';
@@ -18,13 +19,16 @@ import { eq, sql } from 'drizzle-orm';
 
 import { client as dbClient, db } from './lib/db/index.js';
 import { accessSessions, datasets } from './lib/db/schema.js';
+import { isShelbyAvailable } from './lib/shelby/client.js';
 import { closeUploadQueue } from './lib/queue/queue.js';
 import { closeUploadWorker, UploadWorker } from './lib/queue/workers/uploadWorker.js';
 import { closeVerifyWorker, VerifyWorker } from './lib/queue/workers/verifyWorker.js';
 import { closeRateLimitRedisClient, generalRateLimit } from './middleware/rateLimit.js';
 import { accessRouter } from './routes/access.js';
+import { authRouter } from './routes/auth.js';
 import { ApiRouteError, datasetsRouter } from './routes/datasets.js';
 import { publishersRouter } from './routes/publishers.js';
+import { createUploadProgressWebSocketServer } from './routes/wsUploadProgress.js';
 
 const app = express();
 
@@ -52,15 +56,19 @@ app.use(express.urlencoded({
   extended: false,
 }));
 
-app.get('/healthz', (_request: Request, response: Response): void => {
-  response.json({
+app.get('/healthz', asyncHandler(async (_request: Request, response: Response): Promise<void> => {
+  const shelbyOk = await isShelbyAvailable();
+  const status = shelbyOk ? 'ok' : 'degraded';
+
+  response.status(shelbyOk ? 200 : 503).json({
     data: {
-      status: 'ok',
+      shelby: shelbyOk ? 'connected' : 'unavailable',
+      status,
       timestamp: new Date().toISOString(),
     },
-    success: true,
+    success: shelbyOk,
   });
-});
+}));
 
 app.get('/api/stats/live', asyncHandler(async (_request: Request, response: Response): Promise<void> => {
   const [countRow] = await db
@@ -110,6 +118,7 @@ app.get('/api/stats/live', asyncHandler(async (_request: Request, response: Resp
 }));
 
 app.use('/api', generalRateLimit);
+app.use('/api/auth', authRouter);
 app.use('/api/datasets', datasetsRouter);
 app.use('/api', accessRouter);
 app.use('/api', publishersRouter);
@@ -192,13 +201,16 @@ async function shutdown(server?: ReturnType<typeof app.listen>): Promise<void> {
 async function startServer(): Promise<void> {
   const port = getServerPort();
 
-  const server = app.listen(port, (): void => {
+  const httpServer = createServer(app);
+  createUploadProgressWebSocketServer(httpServer);
+
+  httpServer.listen(port, (): void => {
     console.log(`Verida API listening on http://localhost:${port}`);
   });
 
   const onSignal = async (): Promise<void> => {
     try {
-      await shutdown(server);
+      await shutdown(httpServer);
       process.exit(0);
     } catch (cause: unknown) {
       console.error('Error during graceful shutdown.', cause);

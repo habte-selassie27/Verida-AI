@@ -3,6 +3,8 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Card } from '../components/ui/Card';
 import { AddressDisplay } from '../components/ui/AddressDisplay';
+import { updatePublisherProfile } from '../api/client';
+import { useAuth } from '../context/AuthContext';
 import { useWalletContext } from '../context/WalletContext';
 import './Settings.css';
 
@@ -138,18 +140,20 @@ export default function Settings() {
   const [notifIntegrity, setNotifIntegrity] = useState(true);
   const [notifSession, setNotifSession] = useState(false);
   const [notifAccess, setNotifAccess] = useState(true);
-  const [deleteConfirm, setDeleteConfirm] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const { connected, address, networkName, disconnect, connect } = useWalletContext();
+  const { isAuthenticated, login } = useAuth();
 
   const handleSaveProfile = async (e: FormEvent) => {
     e.preventDefault();
+    if (!isAuthenticated) {
+      try { await login(); } catch { return; }
+    }
     setIsSaving(true);
     setSaveMessage(null);
     try {
-      // TODO: Implement actual API call to save profile
-      // await apiClient.updateProfile({ username, bio });
+      await updatePublisherProfile({ bio: bio || null, username: username || null });
       setSaveMessage('Profile saved successfully');
       setTimeout(() => setSaveMessage(null), 3000);
     } catch (err) {
@@ -186,22 +190,6 @@ export default function Settings() {
       setTimeout(() => setSaveMessage(null), 3000);
     } catch (err) {
       setSaveMessage(err instanceof Error ? err.message : 'Failed to save notifications');
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const handleDeleteAccount = async () => {
-    if (deleteConfirm !== 'DELETE') return;
-    setIsSaving(true);
-    setSaveMessage(null);
-    try {
-      // TODO: Implement actual API call to delete account
-      // await apiClient.deleteAccount();
-      setSaveMessage('Account deletion initiated');
-      setTimeout(() => setSaveMessage(null), 3000);
-    } catch (err) {
-      setSaveMessage(err instanceof Error ? err.message : 'Failed to delete account');
     } finally {
       setIsSaving(false);
     }
@@ -401,7 +389,7 @@ export default function Settings() {
         {activeSection === 'danger-zone' && (
           <div>
             <h2 className="settings-heading settings-heading-danger">Danger Zone</h2>
-            <p className="settings-desc">Irreversible actions. Proceed with caution.</p>
+            <p className="settings-desc">Account management features coming soon.</p>
 
             <Card variant="danger" className="settings-danger-card">
               <div className="settings-danger-header">
@@ -409,29 +397,9 @@ export default function Settings() {
                 <span>Delete Account</span>
               </div>
               <p className="settings-danger-text">
-                This will permanently delete your account and all associated data. This action cannot be undone.
+                Account deletion is not yet available. This feature requires additional
+                backend infrastructure to safely remove all associated data.
               </p>
-              <div className="settings-danger-confirm">
-                <label className="settings-field-label">
-                  Type <strong>DELETE</strong> to confirm
-                </label>
-                <div className="settings-danger-input-row">
-                  <input
-                    className="settings-danger-input"
-                    type="text"
-                    value={deleteConfirm}
-                    onChange={(e) => setDeleteConfirm(e.target.value)}
-                    placeholder="Type DELETE"
-                  />
-                  <Button
-                    variant="danger"
-                    disabled={deleteConfirm !== 'DELETE'}
-                    onClick={handleDeleteAccount}
-                  >
-                    Delete Account
-                  </Button>
-                </div>
-              </div>
             </Card>
           </div>
         )}

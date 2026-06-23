@@ -7,6 +7,7 @@
 
 import { relations } from 'drizzle-orm';
 import {
+  bigint,
   boolean,
   index,
   integer,
@@ -36,7 +37,7 @@ export const publishers = pgTable('publishers', {
   username: text('username'),
   bio: text('bio'),
   totalDatasets: integer('total_datasets').notNull().default(0),
-  totalEarnings: integer('total_earnings').notNull().default(0),
+  totalEarnings: bigint('total_earnings', { mode: 'number' }).notNull().default(0),
   verified: boolean('verified').notNull().default(false),
   createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' })
     .notNull()
@@ -51,7 +52,7 @@ export const datasets = pgTable(
     name: text('name').notNull(),
     description: text('description').notNull(),
     tags: text('tags').array().notNull().$type<DatasetTag[]>(),
-    sizeBytes: integer('size_bytes').notNull(),
+    sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
     version: integer('version').notNull(),
     publisherAddress: text('publisher_address')
       .notNull()
@@ -60,7 +61,7 @@ export const datasets = pgTable(
       .notNull()
       .defaultNow(),
     accessType: text('access_type').notNull().$type<AccessType>(),
-    pricePerAccess: integer('price_per_access'),
+    pricePerAccess: bigint('price_per_access', { mode: 'number' }),
     license: text('license').notNull(),
     provenanceReceipt: jsonb('provenance_receipt').notNull().$type<ProvenanceReceipt>(),
     merkleRoot: text('merkle_root').notNull(),
@@ -88,7 +89,7 @@ export const datasetVersions = pgTable(
       .notNull()
       .defaultNow(),
     merkleRoot: text('merkle_root').notNull(),
-    sizeBytes: integer('size_bytes').notNull(),
+    sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
   },
   (table) => ({
     datasetIdIdx: index('dataset_versions_dataset_id_idx').on(table.datasetId),
@@ -113,7 +114,7 @@ export const accessSessions = pgTable(
       .notNull()
       .defaultNow(),
     expiresAt: timestamp('expires_at', { withTimezone: true, mode: 'string' }).notNull(),
-    bytesConsumed: integer('bytes_consumed').notNull().default(0),
+    bytesConsumed: bigint('bytes_consumed', { mode: 'number' }).notNull().default(0),
     status: text('status').notNull().$type<AccessSessionStatus>(),
   },
   (table) => ({

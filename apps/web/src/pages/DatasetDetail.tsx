@@ -162,7 +162,7 @@ export default function DatasetDetail() {
   const [verifyLoading, setVerifyLoading] = useState(false);
   const [relatedDatasets, setRelatedDatasets] = useState<Dataset[]>([]);
   const [relatedLoading, setRelatedLoading] = useState(false);
-  const { connected, address, connect } = useWalletContext();
+  const { connected, address, connect, signAndSubmitTransaction } = useWalletContext();
 
   const fetchDetail = useCallback(async () => {
     if (!id) return;
@@ -234,15 +234,32 @@ export default function DatasetDetail() {
   };
 
   const handleGetAccess = async () => {
-    if (!id || !address) return;
+    if (!id || !address || !detail) return;
     setAccessLoading(true);
     setWalletState('processing');
     try {
-      const result = await createAccessSession(Number(id), address);
-      setSessionId(result.sessionId);
-      const expiresAt = result.expiresAt;
+      let txHash: string | undefined;
+
+      // For pay-per-access datasets, submit the APT transfer first
+      if (detail.dataset.access_type === 'pay_per_access' && detail.dataset.price_per_access) {
+        const priceOctas = detail.dataset.price_per_access;
+        const publisherAddress = detail.dataset.publisher_address;
+
+        const result = await signAndSubmitTransaction({
+          data: {
+            function: '0x1::aptos_account::transfer',
+            typeArguments: ['0x1::aptos_coin::AptosCoin'],
+            functionArguments: [publisherAddress, priceOctas],
+          },
+        });
+        txHash = result.hash;
+      }
+
+      const sessionResult = await createAccessSession(Number(id), address, txHash);
+      setSessionId(sessionResult.sessionId);
+      const expiresAt = sessionResult.expiresAt;
       setSessionExpires(expiresAt);
-      sessionStorage.setItem(`session_${id}`, JSON.stringify({ sessionId: result.sessionId, expiresAt }));
+      sessionStorage.setItem(`session_${id}`, JSON.stringify({ sessionId: sessionResult.sessionId, expiresAt }));
       setWalletState('active');
     } catch {
       setWalletState('connected');

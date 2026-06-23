@@ -29,6 +29,7 @@ import {
   type VerifyIntegrityJobData,
 } from '../lib/queue/queue.js';
 import { ShelbyAccessError, streamDataset, validateSession } from '../lib/shelby/index.js';
+import { getAuthenticatedAddress, requireAuth } from '../middleware/auth.js';
 import { streamRateLimit, uploadRateLimit } from '../middleware/rateLimit.js';
 
 function escapeLikeWildcards(input: string): string {
@@ -560,6 +561,7 @@ const datasetsRouter = Router();
 
 datasetsRouter.post(
   '/upload',
+  requireAuth,
   uploadRateLimit,
   asyncHandler(async (request: Request, response: Response): Promise<void> => {
     try {
@@ -600,107 +602,41 @@ datasetsRouter.post(
     }
 
     const uploadBody = parseUploadBody(request);
+    const authenticatedAddress = getAuthenticatedAddress(request);
+
+    // Bind publisherAddress to the authenticated wallet — reject spoofing
+    if (uploadBody.publisherAddress.toLowerCase() !== authenticatedAddress) {
+      // Clean up temp file on auth failure
+      try { await fs.promises.unlink(file.path); } catch { /* ignore */ }
+      throw new ApiRouteError({
+        code: 'ADDRESS_MISMATCH',
+        message: 'publisherAddress must match the authenticated wallet address.',
+        statusCode: 403,
+      });
+    }
+
     const contentHash = await computeFileContentHash(file.path);
+    const metadata: UploadDatasetMetadata = createUploadMetadataFromBody(uploadBody);
+    metadata.sizeBytes = file.size;
 
-    // Direct insert (dev mode) — bypasses Shelby/BullMQ
-    const datasetVersion = uploadBody.version ?? 1;
-    const nowIso = new Date().toISOString();
-    const mockBlobId = `dev_blob_${randomUUID().replace(/-/g, '').slice(0, 24)}`;
-    const mockMerkleRoot = `0x${contentHash}`;
-    const mockTxHash = `0x${Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('')}`;
+    const jobData: UploadDatasetJobData = {
+      contentHash,
+      filePath: file.path,
+      metadata,
+      publisherAddress: authenticatedAddress,
+    };
 
-    const inserted = await db.transaction(async (tx) => {
-      await tx
-        .insert(publishers)
-        .values({ address: uploadBody.publisherAddress })
-        .onConflictDoNothing();
-
-      const rows = await tx
-        .insert(datasets)
-        .values({
-          accessType: uploadBody.accessType,
-          description: uploadBody.description.trim(),
-          license: uploadBody.license.trim(),
-          merkleRoot: mockMerkleRoot,
-          name: uploadBody.name.trim(),
-          pricePerAccess: uploadBody.accessType === 'pay_per_access' ? (uploadBody.pricePerAccess ?? null) : null,
-          provenanceReceipt: {
-            blobId: mockBlobId,
-            merkleRoot: mockMerkleRoot,
-            uploadedAt: Date.now(),
-            uploaderAddress: uploadBody.publisherAddress,
-            txHash: mockTxHash,
-            size: file.size,
-            chunkCount: 16,
-          },
-          publisherAddress: uploadBody.publisherAddress,
-          shelbyBlobId: mockBlobId,
-          sizeBytes: file.size,
-          tags: uploadBody.tags,
-          tampered: false,
-          verified: true,
-          version: datasetVersion,
-        })
-        .returning({
-          access_type: datasets.accessType,
-          created_at: datasets.createdAt,
-          description: datasets.description,
-          id: datasets.id,
-          license: datasets.license,
-          merkle_root: datasets.merkleRoot,
-          name: datasets.name,
-          price_per_access: datasets.pricePerAccess,
-          provenance_receipt: datasets.provenanceReceipt,
-          publisher_address: datasets.publisherAddress,
-          shelby_blob_id: datasets.shelbyBlobId,
-          size_bytes: datasets.sizeBytes,
-          tags: datasets.tags,
-          tampered: datasets.tampered,
-          verified: datasets.verified,
-          version: datasets.version,
-        });
-
-      const dataset = rows.at(0);
-      if (!dataset) throw new ApiRouteError({ code: 'INSERT_FAILED', message: 'Failed to insert dataset', statusCode: 500 });
-
-      await tx.insert(datasetVersions).values({
-        datasetId: dataset.id,
-        shelbyBlobId: mockBlobId,
-        merkleRoot: mockMerkleRoot,
-        sizeBytes: file.size,
-        version: datasetVersion,
-        changelog: null,
-      });
-
-      await tx.insert(provenanceChain).values({
-        actorAddress: uploadBody.publisherAddress,
-        datasetId: dataset.id,
-        eventType: 'UPLOAD',
-        metadata: { contentHash, jobId: 'dev_direct' } as Record<string, unknown>,
-        shelbyReceipt: {
-          blobId: mockBlobId,
-          merkleRoot: mockMerkleRoot,
-          uploadedAt: Date.now(),
-          uploaderAddress: uploadBody.publisherAddress,
-          txHash: mockTxHash,
-          size: file.size,
-          chunkCount: 16,
-        },
-        timestamp: nowIso,
-        txHash: mockTxHash,
-        version: datasetVersion,
-      });
-
-      return dataset;
+    const job = await UploadDatasetQueue.add(UploadJobTypes.UPLOAD_DATASET, jobData, {
+      attempts: 3,
+      backoff: { delay: 5000, type: 'exponential' },
+      removeOnComplete: { age: 86400, count: 100 },
+      removeOnFail: { age: 604800 },
     });
 
-    // Clean up temp file
-    try { await fs.promises.unlink(file.path); } catch { /* ignore */ }
-
-    response.status(201).json({
+    response.status(202).json({
       data: {
-        dataset: inserted,
-        jobId: `dev_${inserted.id}`,
+        jobId: String(job.id),
+        status: 'queued',
       },
       success: true,
     });
@@ -902,6 +838,7 @@ datasetsRouter.get(
 
 datasetsRouter.post(
   '/:id/verify',
+  requireAuth,
   asyncHandler(async (request: Request, response: Response): Promise<void> => {
     const datasetId = parseRouteDatasetId(request);
     await ensureDatasetExists(datasetId);

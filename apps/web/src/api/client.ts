@@ -8,6 +8,21 @@ import type {
 } from '@verida/shared';
 
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
+const TOKEN_KEY = 'verida_auth_token';
+
+function getStoredToken(): string | null {
+  try {
+    return localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function getAuthHeaders(): Record<string, string> {
+  const token = getStoredToken();
+  if (!token) return {};
+  return { Authorization: `Bearer ${token}` };
+}
 
 class ApiError extends Error {
   constructor(
@@ -22,7 +37,11 @@ class ApiError extends Error {
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+      ...options?.headers,
+    },
     ...options,
   });
 
@@ -125,10 +144,11 @@ export async function getDataset(id: number): Promise<DatasetDetailResponse> {
 export async function createAccessSession(
   datasetId: number,
   payerAddress: string,
+  txHash?: string,
 ): Promise<AccessSessionResponse> {
   return request<AccessSessionResponse>(`/api/datasets/${datasetId}/access`, {
     method: 'POST',
-    body: JSON.stringify({ payerAddress }),
+    body: JSON.stringify({ payerAddress, txHash }),
   });
 }
 
@@ -145,8 +165,15 @@ export async function getPublisher(
 }
 
 export async function uploadDataset(formData: FormData): Promise<UploadResponse> {
+  const token = getStoredToken();
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
   const res = await fetch(`${API_BASE}/api/datasets/upload`, {
     method: 'POST',
+    headers,
     body: formData,
   });
 
@@ -174,4 +201,14 @@ export interface StatsResponse {
 
 export async function getStats(): Promise<StatsResponse> {
   return request<StatsResponse>('/api/stats/live');
+}
+
+export async function updatePublisherProfile(data: {
+  bio?: string | null;
+  username?: string | null;
+}): Promise<Publisher> {
+  return request<Publisher>('/api/publishers/me', {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
 }

@@ -127,6 +127,17 @@ async function createUploadSigner(): Promise<Account> {
     }
   }
 
+  if (process.env.NODE_ENV === 'production') {
+    throw new ShelbyConfigurationError(
+      'SHELBY_SIGNER_PRIVATE_KEY is required in production. ' +
+      'A persistent signer key is needed for deterministic on-chain identity.',
+    );
+  }
+
+  console.warn(
+    '[Shelby] No SHELBY_SIGNER_PRIVATE_KEY set. Generating ephemeral key. ' +
+    'On-chain registrations will use a random identity that is lost on restart.',
+  );
   return Account.generate();
 }
 
@@ -202,28 +213,58 @@ async function initializeShelbyRuntime(): Promise<ShelbyRuntimeState> {
   };
 }
 
-const shelbyRuntimePromise = initializeShelbyRuntime();
-export const shelbyRuntime = await shelbyRuntimePromise;
-export const shelby = shelbyRuntime.client;
+let shelbyRuntimeCache: ShelbyRuntimeState | null = null;
+let shelbyRuntimePromise: Promise<ShelbyRuntimeState> | null = null;
+
+async function getShelbyRuntimeLazy(): Promise<ShelbyRuntimeState> {
+  if (shelbyRuntimeCache !== null) {
+    return shelbyRuntimeCache;
+  }
+
+  if (shelbyRuntimePromise === null) {
+    shelbyRuntimePromise = initializeShelbyRuntime().then((runtime) => {
+      shelbyRuntimeCache = runtime;
+      return runtime;
+    }).catch((error) => {
+      shelbyRuntimePromise = null;
+      throw error;
+    });
+  }
+
+  return shelbyRuntimePromise;
+}
 
 export async function getShelbyRuntime(): Promise<ShelbyRuntime> {
-  return shelbyRuntime;
+  return getShelbyRuntimeLazy();
 }
 
 export async function getShelbyClient(): Promise<ShelbyNodeClient> {
-  return shelbyRuntime.client;
+  const runtime = await getShelbyRuntimeLazy();
+  return runtime.client;
 }
 
 export async function getShelbyRpcBaseUrl(): Promise<string> {
-  return shelbyRuntime.rpcBaseUrl;
+  const runtime = await getShelbyRuntimeLazy();
+  return runtime.rpcBaseUrl;
 }
 
 export async function getShelbyAptosClient(): Promise<Aptos> {
-  return shelbyRuntime.aptos;
+  const runtime = await getShelbyRuntimeLazy();
+  return runtime.aptos;
 }
 
 export async function getShelbyUploadSigner(): Promise<Account> {
-  return shelbyRuntime.uploadSigner;
+  const runtime = await getShelbyRuntimeLazy();
+  return runtime.uploadSigner;
+}
+
+export async function isShelbyAvailable(): Promise<boolean> {
+  try {
+    await getShelbyRuntimeLazy();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function buildBlobId(accountAddress: string, blobName: string): Promise<string> {

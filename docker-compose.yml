@@ -1,4 +1,27 @@
 services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: verida-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgres://verida:localpass@postgres:5432/verida_ai
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-in-production}
+      SHELBY_API_KEY: ${SHELBY_API_KEY:-}
+      SHELBY_SIGNER_PRIVATE_KEY: ${SHELBY_SIGNER_PRIVATE_KEY:-}
+      SHELBY_NETWORK: ${SHELBY_NETWORK:-testnet}
+    ports:
+      - '4000:4000'
+
   postgres:
     image: postgres:16
     container_name: verida-postgres

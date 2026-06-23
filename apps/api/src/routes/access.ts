@@ -11,7 +11,9 @@ import asyncHandler from 'express-async-handler';
 import { z } from 'zod';
 
 import { datasets, db } from '../lib/db/index.js';
+import { getShelbyAptosClient } from '../lib/shelby/client.js';
 import { createAccessSession, ShelbyAccessError, validateSession } from '../lib/shelby/index.js';
+import { getAuthenticatedAddress, requireAuth } from '../middleware/auth.js';
 import { ApiRouteError } from './datasets.js';
 
 const accessRouter = Router();
@@ -22,6 +24,7 @@ const datasetIdParamSchema = z.object({
 
 const accessRequestBodySchema = z.object({
   payerAddress: z.string().trim().min(1),
+  txHash: z.string().trim().min(1).optional(),
 });
 
 const sessionIdParamSchema = z.object({
@@ -72,6 +75,7 @@ function parseAccessBody(request: Request): z.infer<typeof accessRequestBodySche
     payerAddress:
       (typeof rawBody.payerAddress === 'string' ? rawBody.payerAddress : undefined) ??
       (typeof rawBody.payer_address === 'string' ? rawBody.payer_address : undefined),
+    txHash: typeof rawBody.txHash === 'string' ? rawBody.txHash : undefined,
   });
 
   if (!parsed.success) {
@@ -90,12 +94,26 @@ function parseAccessBody(request: Request): z.infer<typeof accessRequestBodySche
 
 accessRouter.post(
   '/datasets/:id/access',
+  requireAuth,
   asyncHandler(async (request: Request, response: Response): Promise<void> => {
     const datasetId = parseDatasetId(request);
+    const authenticatedAddress = getAuthenticatedAddress(request);
     const body = parseAccessBody(request);
+
+    // Bind payerAddress to authenticated wallet — reject spoofing
+    if (body.payerAddress.toLowerCase() !== authenticatedAddress) {
+      throw new ApiRouteError({
+        code: 'ADDRESS_MISMATCH',
+        message: 'payerAddress must match the authenticated wallet address.',
+        statusCode: 403,
+      });
+    }
+
     const datasetRows = await db
       .select({
+        accessType: datasets.accessType,
         id: datasets.id,
+        pricePerAccess: datasets.pricePerAccess,
         shelbyBlobId: datasets.shelbyBlobId,
       })
       .from(datasets)
@@ -111,8 +129,61 @@ accessRouter.post(
       });
     }
 
+    // Enforce payment for pay-per-access datasets
+    if (dataset.accessType === 'pay_per_access' && dataset.pricePerAccess !== null) {
+      if (!body.txHash) {
+        throw new ApiRouteError({
+          code: 'PAYMENT_REQUIRED',
+          message: `This dataset requires ${dataset.pricePerAccess} octas per access. Provide txHash with a valid Aptos transaction.`,
+          statusCode: 402,
+        });
+      }
+
+      // Verify the Aptos transaction on-chain
+      try {
+        const aptos = await getShelbyAptosClient();
+        const txn = await aptos.getTransactionByHash({ transactionHash: body.txHash });
+
+        if (txn.type !== 'user_transaction') {
+          throw new ApiRouteError({
+            code: 'INVALID_TRANSACTION',
+            message: 'Transaction is not a user transaction.',
+            statusCode: 402,
+          });
+        }
+
+        const userTxn = txn as { type: 'user_transaction'; sender: string; payload: { function: string; arguments: unknown[] } };
+
+        // Verify the sender matches the payer
+        if (userTxn.sender.toLowerCase() !== authenticatedAddress) {
+          throw new ApiRouteError({
+            code: 'SENDER_MISMATCH',
+            message: 'Transaction sender does not match the payer address.',
+            statusCode: 402,
+          });
+        }
+
+        // Verify the transaction succeeded
+        if (txn.type === 'user_transaction' && 'success' in txn && !txn.success) {
+          throw new ApiRouteError({
+            code: 'TRANSACTION_FAILED',
+            message: 'The payment transaction failed on-chain.',
+            statusCode: 402,
+          });
+        }
+      } catch (cause: unknown) {
+        if (cause instanceof ApiRouteError) throw cause;
+        console.error('[Access] Failed to verify Aptos transaction:', cause);
+        throw new ApiRouteError({
+          code: 'PAYMENT_VERIFICATION_FAILED',
+          message: 'Unable to verify the payment transaction on-chain.',
+          statusCode: 502,
+        });
+      }
+    }
+
     try {
-      const session = await createAccessSession(dataset.shelbyBlobId, body.payerAddress);
+      const session = await createAccessSession(dataset.shelbyBlobId, authenticatedAddress);
 
       response.status(201).json({
         data: {

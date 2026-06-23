@@ -8,6 +8,7 @@ import { Badge } from '../components/ui/Badge';
 import { AddressDisplay } from '../components/ui/AddressDisplay';
 import { TagPill } from '../components/ui/TagPill';
 import { uploadDataset } from '../api/client';
+import { useAuth } from '../context/AuthContext';
 import { useWalletContext } from '../context/WalletContext';
 import './Upload.css';
 
@@ -132,6 +133,7 @@ function ExternalLinkIcon() {
 export default function Upload() {
   const navigate = useNavigate();
   const { address, connected } = useWalletContext();
+  const { isAuthenticated, isAuthenticating, login } = useAuth();
   const [currentStep, setCurrentStep] = useState(1);
   const [file, setFile] = useState<File | null>(null);
   const [fileHash, setFileHash] = useState('');
@@ -162,6 +164,7 @@ export default function Upload() {
 
   const dropRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     if (!file) {
@@ -261,6 +264,15 @@ export default function Upload() {
       return;
     }
 
+    if (!isAuthenticated) {
+      try {
+        await login();
+      } catch {
+        alert('Please sign the authentication message in your wallet to continue.');
+        return;
+      }
+    }
+
     setUploading(true);
     setUploadPercent(0);
     setUploadStage(0);
@@ -282,25 +294,75 @@ export default function Upload() {
       }
 
       setUploadStage(1);
-      setUploadPercent(25);
+      setUploadPercent(5);
 
       const result = await uploadDataset(formData);
+      const jobId = result.jobId;
 
-      setUploadStage(5);
-      setUploadPercent(100);
-      setChunksDone(16);
+      // Connect to WebSocket for real-time progress
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${wsProtocol}//${window.location.host}/ws/uploads/${jobId}`;
 
-      setTimeout(() => {
-        setUploading(false);
-        setReceipt({
-          jobId: result.jobId,
-          blobId: result.dataset?.shelby_blob_id ?? 'Pending (dev mode)',
-          merkleRoot: result.dataset?.merkle_root ?? 'Pending (dev mode)',
-          txHash: result.dataset?.provenance_receipt?.txHash ?? 'Pending (dev mode)',
-          uploadedAt: new Date().toLocaleString(),
-          chunks: 16,
-        });
-      }, 800);
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'progress') {
+            const progress = msg.data;
+            setUploadPercent(progress.percent);
+            if (progress.stage === 'reading') setUploadStage(1);
+            else if (progress.stage === 'registering') setUploadStage(2);
+            else if (progress.stage === 'confirming') setUploadStage(3);
+            else if (progress.stage === 'complete') setUploadStage(4);
+          } else if (msg.type === 'complete') {
+            setUploadStage(5);
+            setUploadPercent(100);
+            setChunksDone(16);
+            ws.close();
+            setTimeout(() => {
+              setUploading(false);
+              setReceipt({
+                jobId,
+                blobId: result.dataset?.shelby_blob_id ?? 'Pending...',
+                merkleRoot: result.dataset?.merkle_root ?? 'Pending...',
+                txHash: result.dataset?.provenance_receipt?.txHash ?? 'Pending...',
+                uploadedAt: new Date().toLocaleString(),
+                chunks: 16,
+              });
+            }, 500);
+          } else if (msg.type === 'error') {
+            setUploadError(msg.error || 'Upload failed');
+            ws.close();
+            setUploading(false);
+          }
+        } catch {
+          // Ignore parse errors
+        }
+      };
+
+      ws.onerror = () => {
+        // Fallback: show completion since the upload already succeeded via REST
+        setUploadStage(5);
+        setUploadPercent(100);
+        setChunksDone(16);
+        setTimeout(() => {
+          setUploading(false);
+          setReceipt({
+            jobId,
+            blobId: result.dataset?.shelby_blob_id ?? 'Pending...',
+            merkleRoot: result.dataset?.merkle_root ?? 'Pending...',
+            txHash: result.dataset?.provenance_receipt?.txHash ?? 'Pending...',
+            uploadedAt: new Date().toLocaleString(),
+            chunks: 16,
+          });
+        }, 500);
+      };
+
+      ws.onclose = () => {
+        wsRef.current = null;
+      };
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : 'Upload failed');
       setUploading(false);

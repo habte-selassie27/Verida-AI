@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
 import { Button } from '../ui/Button';
+import { useAuth } from '../../context/AuthContext';
 import { useWalletContext } from '../../context/WalletContext';
 import './Navbar.css';
 
@@ -37,6 +38,7 @@ export function Navbar() {
   const [walletDropdown, setWalletDropdown] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const { connected, address, connect, disconnect } = useWalletContext();
+  const { isAuthenticated, isAuthenticating, login, logout } = useAuth();
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -51,9 +53,16 @@ export function Navbar() {
   const handleConnect = async () => {
     try {
       await connect();
+      // SIWE login is triggered automatically by AuthProvider when wallet connects
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to connect wallet');
     }
+  };
+
+  const handleDisconnect = () => {
+    disconnect();
+    logout();
+    setWalletDropdown(false);
   };
 
   return (
@@ -85,13 +94,14 @@ export function Navbar() {
                 className="wallet-btn-connected"
                 onClick={() => setWalletDropdown((prev) => !prev)}
               >
-                <span className="wallet-dot" />
+                <span className={`wallet-dot ${isAuthenticated ? 'authenticated' : ''}`} />
                 {truncateAddress(address)}
+                {isAuthenticating && <span className="auth-spinner" />}
               </button>
               {walletDropdown && (
                 <div className="wallet-dropdown">
                   <div className="wallet-dropdown-item" style={{ fontSize: 11, color: 'var(--text-tertiary)', cursor: 'default' }}>
-                    Aptos Wallet
+                    {isAuthenticated ? 'Authenticated' : 'Read-only mode'}
                   </div>
                   <NavLink to={`/publishers/${address}`} className="wallet-dropdown-item" onClick={() => setWalletDropdown(false)}>
                     View Profile
@@ -99,12 +109,17 @@ export function Navbar() {
                   <NavLink to="/settings" className="wallet-dropdown-item" onClick={() => setWalletDropdown(false)}>
                     Settings
                   </NavLink>
+                  {!isAuthenticated && (
+                    <button
+                      className="wallet-dropdown-item"
+                      onClick={() => { login(); setWalletDropdown(false); }}
+                    >
+                      Sign In
+                    </button>
+                  )}
                   <button
                     className="wallet-dropdown-item"
-                    onClick={() => {
-                      disconnect();
-                      setWalletDropdown(false);
-                    }}
+                    onClick={handleDisconnect}
                   >
                     Disconnect
                   </button>
@@ -149,6 +164,7 @@ export function Navbar() {
                 className="navbar-mobile-disconnect"
                 onClick={() => {
                   disconnect();
+                  logout();
                   setMenuOpen(false);
                 }}
               >

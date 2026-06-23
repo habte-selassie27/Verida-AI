@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
 import { AptosWalletAdapterProvider, useWallet } from '@aptos-labs/wallet-adapter-react';
+import type { InputTransactionData } from '@aptos-labs/wallet-adapter-react';
 
 interface WalletState {
   connected: boolean;
@@ -7,13 +8,14 @@ interface WalletState {
   networkName: string | null;
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
+  signAndSubmitTransaction: (transaction: InputTransactionData) => Promise<{ hash: string }>;
   walletNames: string[];
 }
 
 const WalletContext = createContext<WalletState | null>(null);
 
 function WalletContextInner({ children }: { children: ReactNode }) {
-  const { connect: adapterConnect, disconnect: adapterDisconnect, account, connected, wallets } = useWallet();
+  const { connect: adapterConnect, disconnect: adapterDisconnect, account, connected, wallets, signAndSubmitTransaction: adapterSignAndSubmit } = useWallet();
   const [networkName, setNetworkName] = useState<string | null>(null);
 
   useEffect(() => {
@@ -47,6 +49,12 @@ function WalletContextInner({ children }: { children: ReactNode }) {
     try { await adapterDisconnect(); } catch { /* ignore */ }
   }, [adapterDisconnect]);
 
+  const signAndSubmitTransaction = useCallback(async (transaction: InputTransactionData) => {
+    if (!adapterSignAndSubmit) throw new Error('Wallet does not support signing');
+    const result = await adapterSignAndSubmit(transaction);
+    return { hash: result.hash };
+  }, [adapterSignAndSubmit]);
+
   const address = account?.address ? String(account.address) : null;
   const walletNames = wallets.map((w) => w.name);
 
@@ -57,6 +65,7 @@ function WalletContextInner({ children }: { children: ReactNode }) {
       networkName,
       connect,
       disconnect,
+      signAndSubmitTransaction,
       walletNames,
     }}>
       {children}
