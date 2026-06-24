@@ -10,7 +10,8 @@ import { randomUUID } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import asyncHandler from 'express-async-handler';
 import jwt from 'jsonwebtoken';
-import { sha3_256 } from 'js-sha3';
+import jsSha3 from 'js-sha3';
+const { sha3_256 } = jsSha3;
 import { z } from 'zod';
 
 import { db, publishers } from '../lib/db/index.js';
