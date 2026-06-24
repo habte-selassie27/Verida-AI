@@ -3,7 +3,7 @@ services:
     name: verida-api
     runtime: node
     plan: free
-    buildCommand: npm ci && npm run build --workspace=@verida/shared && npm run build --workspace=@verida/api
+    buildCommand: npm install && npm run build --workspace=@verida/shared && npm run build --workspace=@verida/api
     startCommand: cd apps/api && node dist/index.js
     envVars:
       - key: NODE_ENV
