@@ -5,6 +5,7 @@
     "rootDir": "src",
     "declaration": true,
     "declarationMap": true,
+    "typeRoots": ["../../node_modules/@types", "./node_modules/@types"],
     "paths": {}
   },
   "include": ["src/**/*.ts", "src/**/*.d.ts"],
