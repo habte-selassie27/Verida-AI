@@ -15,6 +15,7 @@
     "db:generate": "drizzle-kit generate --config=drizzle.config.ts"
   },
   "devDependencies": {
-    "drizzle-kit": "^0.31.10"
+    "drizzle-kit": "^0.31.10",
+    "typescript": "~5.9.3"
   }
 }
