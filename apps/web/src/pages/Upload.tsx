@@ -212,13 +212,40 @@ export default function Upload() {
 
   const handleTagKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
-      if (e.key !== 'Enter' || !tagInput.trim()) return;
+      if (e.key === ',') {
+        e.preventDefault();
+        const input = tagInput.trim().replace(/,$/, '').trim();
+        if (!input) return;
+        const match = ALL_TAGS.find(
+          (t) => t.replace(/_/g, ' ').toLowerCase() === input.toLowerCase(),
+        );
+        if (match && !tags.includes(match) && tags.length < 10) {
+          setTags((prev) => [...prev, match]);
+          setTagInput('');
+        }
+        return;
+      }
+      if (e.key !== 'Enter') return;
       e.preventDefault();
+      const input = tagInput.trim();
+      if (!input) return;
+      // Try exact match first
       const match = ALL_TAGS.find(
-        (t) => t.replace(/_/g, ' ').toLowerCase() === tagInput.trim().toLowerCase(),
+        (t) => t.replace(/_/g, ' ').toLowerCase() === input.toLowerCase(),
       );
       if (match && !tags.includes(match) && tags.length < 10) {
         setTags((prev) => [...prev, match]);
+        setTagInput('');
+        return;
+      }
+      // If no exact match, add the first suggestion
+      const suggestions = ALL_TAGS.filter(
+        (t) =>
+          t.replace(/_/g, ' ').toLowerCase().startsWith(input.toLowerCase()) &&
+          !tags.includes(t),
+      );
+      if (suggestions.length > 0 && tags.length < 10 && suggestions[0] !== undefined) {
+        setTags((prev) => [...prev, suggestions[0]!]);
         setTagInput('');
       }
     },
@@ -538,7 +565,7 @@ export default function Upload() {
                   <div className="tag-input-area">
                     <input
                       className="input"
-                      placeholder="Type and press Enter to add tags..."
+                      placeholder="Type a tag and press Enter or comma..."
                       value={tagInput}
                       onChange={(e) => setTagInput(e.target.value)}
                       onKeyDown={handleTagKeyDown}
