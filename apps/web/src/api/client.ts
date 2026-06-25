@@ -212,3 +212,14 @@ export async function updatePublisherProfile(data: {
     body: JSON.stringify(data),
   });
 }
+
+export async function getAptPrice(): Promise<number> {
+  const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
+  try {
+    const res = await fetch(`${API_BASE}/api/price/apt`);
+    const json = await res.json() as { data?: { price?: number } };
+    return json.data?.price ?? 4.50;
+  } catch {
+    return 4.50;
+  }
+}

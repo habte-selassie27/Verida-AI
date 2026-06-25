@@ -7,7 +7,7 @@ import { Input } from '../components/ui/Input';
 import { Badge } from '../components/ui/Badge';
 import { AddressDisplay } from '../components/ui/AddressDisplay';
 import { TagPill } from '../components/ui/TagPill';
-import { uploadDataset } from '../api/client';
+import { uploadDataset, getAptPrice } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useWalletContext } from '../context/WalletContext';
 import './Upload.css';
@@ -146,6 +146,7 @@ export default function Upload() {
   const [license, setLicense] = useState('CC BY 4.0');
   const [accessType, setAccessType] = useState<AccessType>(AccessType.FREE);
   const [price, setPrice] = useState('');
+  const [aptPriceUsd, setAptPriceUsd] = useState(4.50);
 
   const [uploading, setUploading] = useState(false);
   const [uploadPercent, setUploadPercent] = useState(0);
@@ -165,6 +166,10 @@ export default function Upload() {
   const dropRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
+
+  useEffect(() => {
+    getAptPrice().then(setAptPriceUsd);
+  }, []);
 
   useEffect(() => {
     if (!file) {
@@ -681,7 +686,7 @@ export default function Upload() {
                     />
                     <span className="pricing-currency">APT</span>
                     <span className="pricing-usd">
-                      ~${price ? (parseFloat(price) * 8.5).toFixed(2) : '0.00'} USD
+                      ~${price ? (parseFloat(price) * aptPriceUsd).toFixed(2) : '0.00'} USD
                     </span>
                   </div>
                 </div>
@@ -690,31 +695,34 @@ export default function Upload() {
                   <span className="pricing-info-value">24 hours (fixed)</span>
                 </div>
                 <Card className="pricing-estimator">
-                  <h3 className="pricing-estimator-title">Earnings estimator</h3>
+                  <h3 className="pricing-estimator-title">Earnings estimate (potential)</h3>
                   <div className="pricing-scenarios">
                     <div className="pricing-scenario">
                       <span className="pricing-scenario-count">10</span>
                       <span className="pricing-scenario-label">accesses/month</span>
                       <span className="pricing-scenario-earn">
-                        {price ? (parseFloat(price) * 10).toFixed(2) : '0.00'} APT
+                        {price ? `${(parseFloat(price) * 10).toFixed(2)} APT` : '—'}
+                        {price && <span className="pricing-scenario-usd"> (~${(parseFloat(price) * 10 * aptPriceUsd).toFixed(2)})</span>}
                       </span>
                     </div>
                     <div className="pricing-scenario">
                       <span className="pricing-scenario-count">100</span>
                       <span className="pricing-scenario-label">accesses/month</span>
                       <span className="pricing-scenario-earn">
-                        {price ? (parseFloat(price) * 100).toFixed(2) : '0.00'} APT
+                        {price ? `${(parseFloat(price) * 100).toFixed(2)} APT` : '—'}
+                        {price && <span className="pricing-scenario-usd"> (~${(parseFloat(price) * 100 * aptPriceUsd).toFixed(2)})</span>}
                       </span>
                     </div>
                     <div className="pricing-scenario">
                       <span className="pricing-scenario-count">500</span>
                       <span className="pricing-scenario-label">accesses/month</span>
                       <span className="pricing-scenario-earn">
-                        {price ? (parseFloat(price) * 500).toFixed(2) : '0.00'} APT
+                        {price ? `${(parseFloat(price) * 500).toFixed(2)} APT` : '—'}
+                        {price && <span className="pricing-scenario-usd"> (~${(parseFloat(price) * 500 * aptPriceUsd).toFixed(2)})</span>}
                       </span>
                     </div>
                   </div>
-                  <p className="pricing-fee-note">Verida takes 0% platform fee</p>
+                  <p className="pricing-fee-note">Verida takes 0% platform fee · APT price: ${aptPriceUsd.toFixed(2)}</p>
                 </Card>
               </div>
             )}

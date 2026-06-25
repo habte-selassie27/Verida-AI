@@ -119,6 +119,42 @@ app.get('/api/stats/live', asyncHandler(async (_request: Request, response: Resp
 }));
 
 app.use('/api', generalRateLimit);
+
+// Live APT price from CoinGecko (cached for 60s)
+let aptPriceCache: { price: number; fetchedAt: number } | null = null;
+const APT_PRICE_CACHE_MS = 60_000;
+
+app.get('/api/price/apt', asyncHandler(async (_request: Request, response: Response): Promise<void> => {
+  if (aptPriceCache && Date.now() - aptPriceCache.fetchedAt < APT_PRICE_CACHE_MS) {
+    response.json({ data: { price: aptPriceCache.price, currency: 'USD' }, success: true });
+    return;
+  }
+
+  try {
+    const res = await fetch(
+      'https://api.coingecko.com/api/v3/simple/price?ids=aptos&vs_currencies=usd',
+    );
+    if (!res.ok) throw new Error(`CoinGecko responded ${res.status}`);
+    const data = await res.json() as { aptos?: { usd?: number } };
+    const price = data.aptos?.usd;
+
+    if (typeof price !== 'number' || price <= 0) {
+      throw new Error('Invalid price from CoinGecko');
+    }
+
+    aptPriceCache = { price, fetchedAt: Date.now() };
+    response.json({ data: { price, currency: 'USD' }, success: true });
+  } catch (cause: unknown) {
+    // Fallback to cached price if available
+    if (aptPriceCache) {
+      response.json({ data: { price: aptPriceCache.price, currency: 'USD' }, success: true });
+      return;
+    }
+    // Ultimate fallback
+    response.json({ data: { price: 4.50, currency: 'USD', fallback: true }, success: true });
+  }
+}));
+
 app.use('/api/auth', authRouter);
 app.use('/api/datasets', datasetsRouter);
 app.use('/api', accessRouter);

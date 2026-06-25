@@ -595,6 +595,13 @@
   color: var(--text-teal);
 }
 
+.pricing-scenario-usd {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-weight: 400;
+}
+
 .pricing-fee-note {
   font-family: var(--font-sans);
   font-size: 11px;
