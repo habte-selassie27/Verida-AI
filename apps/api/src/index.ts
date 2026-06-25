@@ -61,13 +61,13 @@ app.get('/healthz', asyncHandler(async (_request: Request, response: Response): 
   const shelbyOk = await isShelbyAvailable();
   const status = shelbyOk ? 'ok' : 'degraded';
 
-  response.status(shelbyOk ? 200 : 503).json({
+  response.status(200).json({
     data: {
       shelby: shelbyOk ? 'connected' : 'unavailable',
       status,
       timestamp: new Date().toISOString(),
     },
-    success: shelbyOk,
+    success: true,
   });
 }));
 
