@@ -207,8 +207,7 @@ async function startServer(): Promise<void> {
     await runMigrations();
     console.log('Database migrations completed.');
   } catch (cause: unknown) {
-    console.error('Database migration failed.', cause);
-    process.exit(1);
+    console.error('Database migration failed. Server will start without migrations.', cause);
   }
 
   const httpServer = createServer(app);
