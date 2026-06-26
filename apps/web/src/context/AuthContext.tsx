@@ -65,7 +65,7 @@ function clearToken(): void {
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const { address, connected } = useWalletContext();
+  const { address, connected, signMessage } = useWalletContext();
   const [token, setToken] = useState<string | null>(() => getStoredToken()?.token ?? null);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
 
@@ -98,18 +98,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Step 2: Sign message with wallet
       const { message } = nonceBody.data;
 
-      // Get the wallet adapter to sign
-      const walletAdapter = (window as unknown as Record<string, unknown>).aptos;
-      if (!walletAdapter || typeof walletAdapter !== 'object') {
-        throw new Error('No Aptos wallet adapter found. Please install Petra, Martian, or Pontem.');
-      }
-
-      const signFn = (walletAdapter as { signMessage?: (msg: { message: string }) => Promise<{ signature: string }> }).signMessage;
-      if (!signFn) {
-        throw new Error('Wallet does not support message signing.');
-      }
-
-      const { signature } = await signFn.call(walletAdapter, { message });
+      // Sign via wallet adapter
+      const signature = await signMessage(message);
 
       // Step 3: Verify signature and get JWT
       const verifyRes = await fetch(`${API_BASE}/api/auth/verify`, {
@@ -133,7 +123,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setIsAuthenticating(false);
     }
-  }, [address, connected, isAuthenticating]);
+  }, [address, connected, isAuthenticating, signMessage]);
 
   const logout = useCallback(() => {
     clearToken();
