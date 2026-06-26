@@ -146,7 +146,7 @@ export default function Upload() {
   const [license, setLicense] = useState('CC BY 4.0');
   const [accessType, setAccessType] = useState<AccessType>(AccessType.FREE);
   const [price, setPrice] = useState('');
-  const [aptPriceUsd, setAptPriceUsd] = useState(4.50);
+  const [aptPriceUsd, setAptPriceUsd] = useState(0.60);
 
   const [uploading, setUploading] = useState(false);
   const [uploadPercent, setUploadPercent] = useState(0);

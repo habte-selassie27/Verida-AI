@@ -123,6 +123,7 @@ app.use('/api', generalRateLimit);
 // Live APT price from CoinGecko (cached for 60s)
 let aptPriceCache: { price: number; fetchedAt: number } | null = null;
 const APT_PRICE_CACHE_MS = 60_000;
+const APT_FALLBACK_PRICE = 0.60;
 
 app.get('/api/price/apt', asyncHandler(async (_request: Request, response: Response): Promise<void> => {
   if (aptPriceCache && Date.now() - aptPriceCache.fetchedAt < APT_PRICE_CACHE_MS) {
@@ -133,6 +134,7 @@ app.get('/api/price/apt', asyncHandler(async (_request: Request, response: Respo
   try {
     const res = await fetch(
       'https://api.coingecko.com/api/v3/simple/price?ids=aptos&vs_currencies=usd',
+      { signal: AbortSignal.timeout(5000) },
     );
     if (!res.ok) throw new Error(`CoinGecko responded ${res.status}`);
     const data = await res.json() as { aptos?: { usd?: number } };
@@ -150,8 +152,8 @@ app.get('/api/price/apt', asyncHandler(async (_request: Request, response: Respo
       response.json({ data: { price: aptPriceCache.price, currency: 'USD' }, success: true });
       return;
     }
-    // Ultimate fallback
-    response.json({ data: { price: 4.50, currency: 'USD', fallback: true }, success: true });
+    // Safe fallback — APT historically trades around $0.50-$1.00
+    response.json({ data: { price: APT_FALLBACK_PRICE, currency: 'USD', fallback: true }, success: true });
   }
 }));
 

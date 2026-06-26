@@ -218,8 +218,8 @@ export async function getAptPrice(): Promise<number> {
   try {
     const res = await fetch(`${API_BASE}/api/price/apt`);
     const json = await res.json() as { data?: { price?: number } };
-    return json.data?.price ?? 4.50;
+    return json.data?.price ?? 0.60;
   } catch {
-    return 4.50;
+    return 0.60;
   }
 }
