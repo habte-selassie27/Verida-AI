@@ -10,5 +10,7 @@ services:
         value: production
       - key: SHELBY_NETWORK
         value: testnet
+      - key: CMC_API_KEY
+        sync: false
     healthCheckPath: /healthz
     autoDeploy: true

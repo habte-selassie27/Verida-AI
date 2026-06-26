@@ -120,7 +120,7 @@ app.get('/api/stats/live', asyncHandler(async (_request: Request, response: Resp
 
 app.use('/api', generalRateLimit);
 
-// Live APT price from CoinGecko (cached for 60s)
+// Live APT price from CoinMarketCap (cached for 60s)
 let aptPriceCache: { price: number; fetchedAt: number } | null = null;
 const APT_PRICE_CACHE_MS = 60_000;
 const APT_FALLBACK_PRICE = 0.60;
@@ -131,30 +131,41 @@ app.get('/api/price/apt', asyncHandler(async (_request: Request, response: Respo
     return;
   }
 
-  try {
-    const res = await fetch(
-      'https://api.coingecko.com/api/v3/simple/price?ids=aptos&vs_currencies=usd',
-      { signal: AbortSignal.timeout(5000) },
-    );
-    if (!res.ok) throw new Error(`CoinGecko responded ${res.status}`);
-    const data = await res.json() as { aptos?: { usd?: number } };
-    const price = data.aptos?.usd;
+  const cmcKey = process.env.CMC_API_KEY?.trim();
 
-    if (typeof price !== 'number' || price <= 0) {
-      throw new Error('Invalid price from CoinGecko');
-    }
+  if (cmcKey) {
+    try {
+      const res = await fetch(
+        'https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol=APT&convert=USD',
+        {
+          headers: { 'X-CMC_PRO_API_KEY': cmcKey },
+          signal: AbortSignal.timeout(5000),
+        },
+      );
+      if (!res.ok) throw new Error(`CoinMarketCap responded ${res.status}`);
+      const data = await res.json() as {
+        data?: { APT?: { quote?: { USD?: { price?: number } } } };
+      };
+      const price = data.data?.APT?.quote?.USD?.price;
 
-    aptPriceCache = { price, fetchedAt: Date.now() };
-    response.json({ data: { price, currency: 'USD' }, success: true });
-  } catch (cause: unknown) {
-    // Fallback to cached price if available
-    if (aptPriceCache) {
-      response.json({ data: { price: aptPriceCache.price, currency: 'USD' }, success: true });
-      return;
+      if (typeof price === 'number' && price > 0) {
+        aptPriceCache = { price, fetchedAt: Date.now() };
+        response.json({ data: { price, currency: 'USD', source: 'coinmarketcap' }, success: true });
+        return;
+      }
+    } catch (cause: unknown) {
+      console.warn('[Price] CoinMarketCap fetch failed:', cause);
     }
-    // Safe fallback — APT historically trades around $0.50-$1.00
-    response.json({ data: { price: APT_FALLBACK_PRICE, currency: 'USD', fallback: true }, success: true });
   }
+
+  // Fallback to cached price if available
+  if (aptPriceCache) {
+    response.json({ data: { price: aptPriceCache.price, currency: 'USD', source: 'cache' }, success: true });
+    return;
+  }
+
+  // Safe fallback
+  response.json({ data: { price: APT_FALLBACK_PRICE, currency: 'USD', source: 'fallback' }, success: true });
 }));
 
 app.use('/api/auth', authRouter);
