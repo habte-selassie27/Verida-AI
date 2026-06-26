@@ -133,7 +133,7 @@ function ExternalLinkIcon() {
 export default function Upload() {
   const navigate = useNavigate();
   const { address, connected } = useWalletContext();
-  const { isAuthenticated, isAuthenticating, login } = useAuth();
+  const { isAuthenticated, isAuthenticating, login, logout } = useAuth();
   const [currentStep, setCurrentStep] = useState(1);
   const [file, setFile] = useState<File | null>(null);
   const [fileHash, setFileHash] = useState('');
@@ -300,13 +300,13 @@ export default function Upload() {
       return;
     }
 
-    if (!isAuthenticated) {
-      try {
-        await login();
-      } catch {
-        alert('Please sign the authentication message in your wallet to continue.');
-        return;
-      }
+    // Always authenticate fresh before upload
+    try {
+      logout();
+      await login();
+    } catch {
+      alert('Please sign the authentication message in your wallet to continue.');
+      return;
     }
 
     setUploading(true);
