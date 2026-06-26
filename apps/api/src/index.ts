@@ -123,49 +123,57 @@ app.use('/api', generalRateLimit);
 // Live APT price from CoinMarketCap (cached for 60s)
 let aptPriceCache: { price: number; fetchedAt: number } | null = null;
 const APT_PRICE_CACHE_MS = 60_000;
-const APT_FALLBACK_PRICE = 0.60;
 
 app.get('/api/price/apt', asyncHandler(async (_request: Request, response: Response): Promise<void> => {
   if (aptPriceCache && Date.now() - aptPriceCache.fetchedAt < APT_PRICE_CACHE_MS) {
-    response.json({ data: { price: aptPriceCache.price, currency: 'USD' }, success: true });
+    response.json({ data: { price: aptPriceCache.price, currency: 'USD', source: 'cache' }, success: true });
     return;
   }
 
   const cmcKey = process.env.CMC_API_KEY?.trim();
 
-  if (cmcKey) {
-    try {
-      const res = await fetch(
-        'https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol=APT&convert=USD',
-        {
-          headers: { 'X-CMC_PRO_API_KEY': cmcKey },
-          signal: AbortSignal.timeout(5000),
-        },
-      );
-      if (!res.ok) throw new Error(`CoinMarketCap responded ${res.status}`);
-      const data = await res.json() as {
-        data?: { APT?: { quote?: { USD?: { price?: number } } } };
-      };
-      const price = data.data?.APT?.quote?.USD?.price;
-
-      if (typeof price === 'number' && price > 0) {
-        aptPriceCache = { price, fetchedAt: Date.now() };
-        response.json({ data: { price, currency: 'USD', source: 'coinmarketcap' }, success: true });
-        return;
-      }
-    } catch (cause: unknown) {
-      console.warn('[Price] CoinMarketCap fetch failed:', cause);
-    }
-  }
-
-  // Fallback to cached price if available
-  if (aptPriceCache) {
-    response.json({ data: { price: aptPriceCache.price, currency: 'USD', source: 'cache' }, success: true });
+  if (!cmcKey) {
+    response.status(500).json({
+      error: { code: 'MISSING_CMC_API_KEY', error: 'CMC_API_KEY is not configured.' },
+      success: false,
+    });
     return;
   }
 
-  // Safe fallback
-  response.json({ data: { price: APT_FALLBACK_PRICE, currency: 'USD', source: 'fallback' }, success: true });
+  try {
+    const res = await fetch(
+      'https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol=APT&convert=USD',
+      {
+        headers: { 'X-CMC_PRO_API_KEY': cmcKey },
+        signal: AbortSignal.timeout(5000),
+      },
+    );
+    if (!res.ok) throw new Error(`CoinMarketCap responded ${res.status}`);
+    const data = await res.json() as {
+      data?: { APT?: { quote?: { USD?: { price?: number } } } };
+    };
+    const price = data.data?.APT?.quote?.USD?.price;
+
+    if (typeof price !== 'number' || price <= 0) {
+      throw new Error('Invalid price from CoinMarketCap');
+    }
+
+    aptPriceCache = { price, fetchedAt: Date.now() };
+    response.json({ data: { price, currency: 'USD', source: 'coinmarketcap' }, success: true });
+  } catch (cause: unknown) {
+    console.error('[Price] CoinMarketCap fetch failed:', cause);
+
+    // Return cached price if available, otherwise fail
+    if (aptPriceCache) {
+      response.json({ data: { price: aptPriceCache.price, currency: 'USD', source: 'cache' }, success: true });
+      return;
+    }
+
+    response.status(502).json({
+      error: { code: 'PRICE_FETCH_FAILED', error: 'Unable to fetch APT price from CoinMarketCap.' },
+      success: false,
+    });
+  }
 }));
 
 app.use('/api/auth', authRouter);

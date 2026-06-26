@@ -146,7 +146,7 @@ export default function Upload() {
   const [license, setLicense] = useState('CC BY 4.0');
   const [accessType, setAccessType] = useState<AccessType>(AccessType.FREE);
   const [price, setPrice] = useState('');
-  const [aptPriceUsd, setAptPriceUsd] = useState(0.60);
+  const [aptPriceUsd, setAptPriceUsd] = useState<number | null>(null);
 
   const [uploading, setUploading] = useState(false);
   const [uploadPercent, setUploadPercent] = useState(0);
@@ -168,7 +168,11 @@ export default function Upload() {
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
-    getAptPrice().then(setAptPriceUsd);
+    let cancelled = false;
+    getAptPrice()
+      .then((p) => { if (!cancelled) setAptPriceUsd(p); })
+      .catch(() => { if (!cancelled) setAptPriceUsd(null); });
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -686,7 +690,9 @@ export default function Upload() {
                     />
                     <span className="pricing-currency">APT</span>
                     <span className="pricing-usd">
-                      ~${price ? (parseFloat(price) * aptPriceUsd).toFixed(2) : '0.00'} USD
+                      {price && aptPriceUsd !== null
+                        ? `~$${(parseFloat(price) * aptPriceUsd).toFixed(2)} USD`
+                        : 'USD unavailable'}
                     </span>
                   </div>
                 </div>
@@ -702,7 +708,7 @@ export default function Upload() {
                       <span className="pricing-scenario-label">accesses/month</span>
                       <span className="pricing-scenario-earn">
                         {price ? `${(parseFloat(price) * 10).toFixed(2)} APT` : '—'}
-                        {price && <span className="pricing-scenario-usd"> (~${(parseFloat(price) * 10 * aptPriceUsd).toFixed(2)})</span>}
+                        {price && aptPriceUsd !== null && <span className="pricing-scenario-usd"> (~${(parseFloat(price) * 10 * aptPriceUsd).toFixed(2)})</span>}
                       </span>
                     </div>
                     <div className="pricing-scenario">
@@ -710,7 +716,7 @@ export default function Upload() {
                       <span className="pricing-scenario-label">accesses/month</span>
                       <span className="pricing-scenario-earn">
                         {price ? `${(parseFloat(price) * 100).toFixed(2)} APT` : '—'}
-                        {price && <span className="pricing-scenario-usd"> (~${(parseFloat(price) * 100 * aptPriceUsd).toFixed(2)})</span>}
+                        {price && aptPriceUsd !== null && <span className="pricing-scenario-usd"> (~${(parseFloat(price) * 100 * aptPriceUsd).toFixed(2)})</span>}
                       </span>
                     </div>
                     <div className="pricing-scenario">
@@ -718,11 +724,11 @@ export default function Upload() {
                       <span className="pricing-scenario-label">accesses/month</span>
                       <span className="pricing-scenario-earn">
                         {price ? `${(parseFloat(price) * 500).toFixed(2)} APT` : '—'}
-                        {price && <span className="pricing-scenario-usd"> (~${(parseFloat(price) * 500 * aptPriceUsd).toFixed(2)})</span>}
+                        {price && aptPriceUsd !== null && <span className="pricing-scenario-usd"> (~${(parseFloat(price) * 500 * aptPriceUsd).toFixed(2)})</span>}
                       </span>
                     </div>
                   </div>
-                  <p className="pricing-fee-note">Verida takes 0% platform fee · APT price: ${aptPriceUsd.toFixed(2)}</p>
+                  <p className="pricing-fee-note">Verida takes 0% platform fee · APT price: {aptPriceUsd !== null ? `$${aptPriceUsd.toFixed(2)}` : 'unavailable'}</p>
                 </Card>
               </div>
             )}
