@@ -108,10 +108,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         body: JSON.stringify({ address, message, signature }),
       });
       const verifyBody = await verifyRes.json() as {
-        data: { address: string; expiresIn: string; token: string };
+        data?: { address: string; expiresIn: string; token: string };
+        error?: { code: string; error: string; details?: unknown };
         success: boolean;
       };
-      if (!verifyBody.success) throw new Error('Signature verification failed');
+      if (!verifyBody.success) {
+        const errorCode = verifyBody.error?.code ?? 'UNKNOWN';
+        const errorMsg = verifyBody.error?.error ?? 'Unknown error';
+        console.error(`[Auth] Verify failed: ${errorCode} - ${errorMsg}`, verifyBody.error?.details);
+        throw new Error(errorMsg);
+      }
 
       storeToken(verifyBody.data.token, verifyBody.data.expiresIn);
       setToken(verifyBody.data.token);
