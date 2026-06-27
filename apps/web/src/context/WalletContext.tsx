@@ -16,7 +16,7 @@ interface WalletState {
 const WalletContext = createContext<WalletState | null>(null);
 
 function WalletContextInner({ children }: { children: ReactNode }) {
-  const { connect: adapterConnect, disconnect: adapterDisconnect, account, connected, wallets, signAndSubmitTransaction: adapterSignAndSubmit, signMessage: adapterSignMessage } = useWallet();
+  const { connect: adapterConnect, disconnect: adapterDisconnect, account, connected, wallets, signAndSubmitTransaction: adapterSignAndSubmit } = useWallet();
   const [networkName, setNetworkName] = useState<string | null>(null);
 
   useEffect(() => {
@@ -57,11 +57,12 @@ function WalletContextInner({ children }: { children: ReactNode }) {
   }, [adapterSignAndSubmit]);
 
   const signMessage = useCallback(async (message: string): Promise<string> => {
-    if (!adapterSignMessage) throw new Error('Wallet does not support message signing');
-    const result = await adapterSignMessage({ message, nonce: 'verida-ai-auth' });
-    if (!result.signature) throw new Error('No signature returned from wallet');
-    return typeof result.signature === 'string' ? result.signature : JSON.stringify(result.signature);
-  }, [adapterSignMessage]);
+    const anyWindow = window as unknown as { aptos?: { signMessage?: (input: { message: string; nonce?: string }) => Promise<{ signature: string | { publicKey: string; signature: string } }> } };
+    if (!anyWindow.aptos?.signMessage) throw new Error('Wallet does not support message signing');
+    const result = await anyWindow.aptos.signMessage({ message, nonce: 'verida-ai-auth' });
+    const sig = result.signature;
+    return typeof sig === 'string' ? sig : sig.signature;
+  }, []);
 
   const address = account?.address ? String(account.address) : null;
   const walletNames = wallets.map((w) => w.name);
