@@ -16,7 +16,7 @@ interface WalletState {
 const WalletContext = createContext<WalletState | null>(null);
 
 function WalletContextInner({ children }: { children: ReactNode }) {
-  const { connect: adapterConnect, disconnect: adapterDisconnect, account, connected, wallets, signAndSubmitTransaction: adapterSignAndSubmit, signMessage: adapterSignMessage } = useWallet();
+  const { connect: adapterConnect, disconnect: adapterDisconnect, account, connected, wallets, signAndSubmitTransaction: adapterSignAndSubmit, signMessage: adapterSignMessage, signIn: adapterSignIn } = useWallet();
   const [networkName, setNetworkName] = useState<string | null>(null);
 
   useEffect(() => {
@@ -53,16 +53,41 @@ function WalletContextInner({ children }: { children: ReactNode }) {
   }, [adapterSignAndSubmit]);
 
   const signMessage = useCallback(async (message: string): Promise<string> => {
-    if (!adapterSignMessage) throw new Error('Wallet does not support message signing');
-    // Use full payload format per latest Petra docs
-    const response = await adapterSignMessage({
-      message,
-      nonce: Date.now().toString(),
+    // Try signMessage first (Petra v2.4.8 may throw deprecation error)
+    if (adapterSignMessage) {
+      try {
+        const response = await adapterSignMessage({
+          message,
+          nonce: Date.now().toString(),
+        });
+        const r = response as { signature: string };
+        return r.signature;
+      } catch {
+        // Fall through to signIn if signMessage fails
+      }
+    }
+
+    // Fallback: use signIn (SIWA) — different wallet standard feature
+    if (!adapterSignIn) throw new Error('Wallet does not support message signing');
+
+    const walletName = account?.address ? wallets.find((w) =>
+      w.name.toLowerCase().includes('petra'),
+    )?.name : undefined;
+
+    const result = await adapterSignIn({
+      walletName: walletName ?? 'Petra',
+      input: {
+        domain: window.location.host,
+        nonce: Date.now().toString(),
+        address: account?.address,
+        statement: message,
+        version: '1',
+      },
     });
-    // SignMessageResponse always has `signature` as a string
-    const r = response as { signature: string };
-    return r.signature;
-  }, [adapterSignMessage]);
+
+    if (!result?.signature) throw new Error('No signature returned from wallet');
+    return result.signature as unknown as string;
+  }, [adapterSignMessage, adapterSignIn, account, wallets]);
 
   const address = account?.address ? String(account.address) : null;
   const walletNames = wallets.map((w) => w.name);
