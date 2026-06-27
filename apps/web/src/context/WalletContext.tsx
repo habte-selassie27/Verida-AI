@@ -62,8 +62,12 @@ function WalletContextInner({ children }: { children: ReactNode }) {
         });
         const r = response as { signature: string };
         return r.signature;
-      } catch {
-        // Fall through to signIn if signMessage fails
+      } catch (e) {
+        // Only fallback signIn on Petra deprecation errors
+        const msg = e instanceof Error ? e.message : String(e);
+        if (!msg.includes('DeprecatedApiError') && !msg.includes('window.petra')) {
+          throw e;
+        }
       }
     }
 
@@ -86,7 +90,13 @@ function WalletContextInner({ children }: { children: ReactNode }) {
     });
 
     if (!result?.signature) throw new Error('No signature returned from wallet');
-    return result.signature as unknown as string;
+
+    // SIWA signature is { publicKey, signature, type } — concatenate pubkey+sig as hex
+    const sig = result.signature as { publicKey: string | Uint8Array; signature: string | Uint8Array };
+    const pubKeyHex = typeof sig.publicKey === 'string' ? sig.publicKey.replace('0x', '') : Array.from(new Uint8Array(sig.publicKey)).map((b) => b.toString(16).padStart(2, '0')).join('');
+    const sigHex = typeof sig.signature === 'string' ? sig.signature.replace('0x', '') : Array.from(new Uint8Array(sig.signature)).map((b) => b.toString(16).padStart(2, '0')).join('');
+    // Backend expects: pubKeyHex(64) + sigHex(64) = 128 hex chars
+    return `0x${pubKeyHex}${sigHex}`;
   }, [adapterSignMessage, adapterSignIn, account, wallets]);
 
   const address = account?.address ? String(account.address) : null;
