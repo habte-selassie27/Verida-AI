@@ -728,7 +728,7 @@ export default function Upload() {
                       </span>
                     </div>
                   </div>
-                  <p className="pricing-fee-note">Verida takes 0% platform fee · APT price: {aptPriceUsd !== null ? `$${aptPriceUsd.toFixed(2)}` : 'unavailable'}</p>
+                  <p className="pricing-fee-note">Verida takes 0% platform fee · APT price: {aptPriceUsd !== null ? `$${aptPriceUsd.toFixed(4)}` : 'unavailable'}</p>
                 </Card>
               </div>
             )}
