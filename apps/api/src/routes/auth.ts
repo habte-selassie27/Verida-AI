@@ -58,6 +58,11 @@ const verifyRequestSchema = z.object({
   signature: z.string().trim().min(1, 'Signature is required.'),
 });
 
+// Test-only export. Re-using this directly skips nonce replay protection,
+// signature verification, and JWT issuance — only safe when you also mock
+// `verifyAptosSignature` and `jwt.sign`.
+export const __TEST_ONLY_verifyRequestSchema = verifyRequestSchema;
+
 function generateNonce(): string {
   return `verida-ai-login-${randomUUID()}`;
 }

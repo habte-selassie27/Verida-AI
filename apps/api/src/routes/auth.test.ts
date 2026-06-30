@@ -118,4 +118,148 @@ describe('Auth route helpers', () => {
       expect(summarizeZodIssues(issues)).toBe('Invalid request: signature (Required).');
     });
   });
+
+  describe('verifyRequestSchema — request validation regression gate', () => {
+    // We import the schema directly from auth.ts so this test exercises the
+    // EXACT validator the production handler uses. This is the regression
+    // gate for the "client sends signature as object" bug class: if someone
+    // ever loosens the schema back to z.any() this test fails loudly.
+    //
+    // NOTE: this is NOT an end-to-end integration test of the /verify HTTP
+    // handler. It validates the request-body schema in isolation. Full
+    // handler coverage (nonce replay, signature verification, JWT issuance)
+    // would require mock infrastructure beyond this file's scope.
+    type Schema = {
+      safeParse: (input: unknown) => {
+        success: boolean;
+        data?: { signature: string };
+        error?: { issues: { code: string; message: string; path: (string | number)[] }[] };
+      };
+    };
+    let verifyRequestSchema: Schema;
+
+    beforeEach(async () => {
+      // Dynamic import so module-level mocks above are in effect first.
+      const mod = await import('./auth.js');
+      verifyRequestSchema = (mod as unknown as {
+        __TEST_ONLY_verifyRequestSchema: Schema;
+      }).__TEST_ONLY_verifyRequestSchema;
+    });
+
+    // A realistic Aptos address: 32-byte hex with 0x prefix.
+    const VALID_ADDRESS = '0x' + 'a'.repeat(64);
+
+    // The string the client MUST send post-fix:
+    //   '0x' (2 chars) + (32-byte Ed25519 pubKey hex = 64 chars) +
+    //   (64-byte Ed25519 sig hex = 128 chars)
+    //   total length = 2 + 64 + 128 = 194 chars
+    const VALID_SIWA_SIGNATURE = '0x' + 'b'.repeat(64) + 'c'.repeat(128);
+
+    it('accepts a properly-formatted SIWA string signature', () => {
+      const result = verifyRequestSchema.safeParse({
+        address: VALID_ADDRESS,
+        message: 'Welcome to Verida AI!\n\nWallet: 0x...\nNonce: example-nonce\n\nBy signing this message.',
+        signature: VALID_SIWA_SIGNATURE,
+      });
+      expect(result.success).toBe(true);
+      if (result.success && result.data) {
+        expect(result.data.signature).toBe(VALID_SIWA_SIGNATURE);
+        expect(typeof result.data.signature).toBe('string');
+      }
+    });
+
+    it('REJECTS an object signature — guards the "Expected string, received object" bug class', () => {
+      // This shape is exactly what JSON.stringify would produce for a
+      // serialized Uint8Array — the bug the user hit in production.
+      const serializedUint8Array = { 0: 1, 1: 2, 2: 3, 3: 4, 4: 5 };
+      const result = verifyRequestSchema.safeParse({
+        address: VALID_ADDRESS,
+        message: 'Some non-empty challenge message',
+        signature: serializedUint8Array,
+      });
+      expect(result.success).toBe(false);
+      if (!result.success && result.error) {
+        const sigIssue = result.error.issues.find((i) => i.path.join('.') === 'signature');
+        expect(sigIssue).toBeDefined();
+        // Use the Zod issue code (locale-stable) so a future Zod release won't
+        // silently break this regression gate.
+        expect(sigIssue?.code).toBe('invalid_type');
+      }
+    });
+
+    it('REJECTS a Uint8Array-shaped signature', () => {
+      // Even at the wire level, the server must NEVER see a Uint8Array. JSON
+      // serializes those to object literals {0:..,1:..} — which the previous
+      // test catches. But we also assert the schema rejects any non-string.
+      const result = verifyRequestSchema.safeParse({
+        address: VALID_ADDRESS,
+        message: 'Some non-empty challenge message',
+        signature: new Uint8Array([1, 2, 3, 4, 5]),
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('REJECTS a numeric signature', () => {
+      const result = verifyRequestSchema.safeParse({
+        address: VALID_ADDRESS,
+        message: 'Some non-empty challenge message',
+        signature: 12345 as unknown as string,
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('REJECTS missing signature field', () => {
+      const result = verifyRequestSchema.safeParse({
+        address: VALID_ADDRESS,
+        message: 'Some non-empty challenge message',
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        const sigIssue = result.error.issues.find((i) => i.path.join('.') === 'signature');
+        expect(sigIssue?.code).toBe('invalid_type');
+      }
+    });
+
+    it('REJECTS empty-string signature', () => {
+      const result = verifyRequestSchema.safeParse({
+        address: VALID_ADDRESS,
+        message: 'Some non-empty challenge message',
+        signature: '   ', // trims to ''
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('REJECTS non-Aptos address', () => {
+      const result = verifyRequestSchema.safeParse({
+        address: 'not-an-address',
+        message: 'Some non-empty challenge message',
+        signature: VALID_SIWA_SIGNATURE,
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        const addrIssue = result.error.issues.find((i) => i.path.join('.') === 'address');
+        expect(addrIssue?.message).toContain('Invalid Aptos address');
+      }
+    });
+
+    it('REJECTS empty message', () => {
+      const result = verifyRequestSchema.safeParse({
+        address: VALID_ADDRESS,
+        message: '',
+        signature: VALID_SIWA_SIGNATURE,
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('accepts signature without 0x prefix', () => {
+      // Defensive: backend should accept either form after we strip the prefix.
+      const sigHexOnly = 'b'.repeat(64) + 'c'.repeat(128);
+      const result = verifyRequestSchema.safeParse({
+        address: VALID_ADDRESS,
+        message: 'Some non-empty challenge message',
+        signature: sigHexOnly,
+      });
+      expect(result.success).toBe(true);
+    });
+  });
 });

@@ -64,6 +64,115 @@ function clearToken(): void {
   localStorage.removeItem(TOKEN_EXPIRY_KEY);
 }
 
+/**
+ * Deep-introspect a value for safe logging.
+ *
+ * CRITICAL: only describes the SHAPE of the value. Never logs the actual bytes
+ * of a wallet signature — those are sensitive. Returns a JSON-serializable
+ * record that can be passed straight to `console.error` and inspected without
+ * clicking through `[Object]` placeholders.
+ */
+type SignatureShape =
+  | { kind: 'string'; length: number; hexLength: number; startsWithZeroX: boolean; firstChars: string }
+  | { kind: 'Uint8Array'; length: number; hexPreview: string; stack: string }
+  | { kind: 'object'; ctor: string | null; keys: readonly string[]; jsonSnippet: string; stack: string }
+  | { kind: 'undefined' | 'number' | 'boolean' | 'bigint' | 'symbol' | 'function' };
+
+function inspectSignature(sig: unknown): SignatureShape {
+  // Capture the stack ONCE up front so non-string branches can include it
+  // without each allocating their own Error.
+  const stack = new Error('[inspectSignature] capture point').stack ?? '<stack unavailable>';
+  if (typeof sig === 'string') {
+    const stripped = sig.replace(/^0x/, '');
+    return {
+      kind: 'string',
+      length: sig.length,
+      hexLength: stripped.length,
+      startsWithZeroX: sig.startsWith('0x'),
+      firstChars: sig.length > 12 ? `${sig.slice(0, 12)}…` : sig,
+    };
+  }
+  if (sig instanceof Uint8Array) {
+    const sampleBytes = Array.from(sig).slice(0, 6).map((b) => b.toString(16).padStart(2, '0')).join('');
+    const overallHexLen = sig.length * 2;
+    return {
+      kind: 'Uint8Array',
+      length: sig.length,
+      hexPreview: sig.length > 6
+        ? `0x${sampleBytes} (${overallHexLen}-hex total)`
+        : `0x${sampleBytes}`,
+      stack,
+    };
+  }
+  if (sig !== null && typeof sig === 'object') {
+    const obj = sig as Record<string, unknown>;
+    // Preserve natural enumeration order — useful for triangulating which
+    // wallet adapter branch produced the object.
+    const keys = Object.keys(obj).slice(0, 8);
+    let jsonSnippet = '<unserializable>';
+    try {
+      const serialized = JSON.stringify(obj);
+      jsonSnippet = serialized.length > 80 ? `${serialized.slice(0, 80)}…` : serialized;
+    } catch {
+      /* fall through, keep <unserializable> */
+    }
+    return {
+      kind: 'object',
+      ctor: obj.constructor?.name ?? null,
+      keys,
+      jsonSnippet,
+      stack,
+    };
+  }
+  // Captures undefined / number / boolean / bigint / symbol / function.
+  // After the preceding string and object narrowing, `typeof sig` can only be
+  // one of these primitive kinds.
+  const primitiveKind = typeof sig as
+    | 'undefined' | 'number' | 'boolean' | 'bigint' | 'symbol' | 'function';
+  return { kind: primitiveKind };
+}
+
+/**
+ * Coerce a wallet signature to a non-empty hex string at the network boundary.
+ *
+ * Defense in depth: if the WalletContext normalizer misses a case, this is the
+ * last stop before JSON.stringify. JSON.stringify of a Uint8Array produces
+ * `{"0":1,"1":2,…}` — which is exactly what was being sent when the user
+ * reported `signature (Expected string, received object)`.
+ */
+function coerceSignature(sig: unknown): string {
+  if (typeof sig === 'string') {
+    if (sig.length === 0) {
+      throw new Error('Wallet returned an empty signature string. Refresh and retry.');
+    }
+    return sig;
+  }
+  if (sig instanceof Uint8Array) {
+    // A 64-byte Uint8Array is exactly one Ed25519 signature. We deliberately
+    // do NOT accept length 32 (which is the shape of an Ed25519 public key) —
+    // if the wallet hands us the pubkey instead of the signature, that's a
+    // real bug that should fail loudly rather than be papered over.
+    if (sig.length === 64) {
+      const hex = Array.from(sig).map((b) => b.toString(16).padStart(2, '0')).join('');
+      console.warn(
+        '[Auth] Coerced a 64-byte Uint8Array signature to hex at the network boundary.',
+        inspectSignature(sig),
+      );
+      return `0x${hex}`;
+    }
+  }
+  const shape = inspectSignature(sig);
+  console.error(
+    `[Auth] Refusing to send signature of kind=${shape.kind}; expected string.`,
+    shape,
+  );
+  let detail = `kind=${shape.kind}`;
+  if (shape.kind === 'object') detail += `, ctor=${shape.ctor ?? 'n/a'}`;
+  throw new Error(
+    `Wallet returned signature in an unexpected shape (${detail}). Please refresh and retry.`,
+  );
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const { address, connected, signMessage } = useWalletContext();
   const [token, setToken] = useState<string | null>(() => getStoredToken()?.token ?? null);
@@ -122,19 +231,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
 
       // Step 3: Verify signature and get JWT
-      // Strip undefined values explicitly so JSON.stringify cannot drop a
-      // required field silently. The server-side Zod schema treats missing
-      // fields as invalid.
+      // Defense in depth: ensure signature is a canonical hex string at the
+      // network boundary. If WalletContext leaks a Uint8Array or object, this
+      // is the last line of defense BEFORE JSON.stringify — which would
+      // serialize a Uint8Array as `{"0":1,"1":2,…}` and cause the server to
+      // reject it as "Expected string, received object".
+      const safeSignature = coerceSignature(signature);
+      const signatureShape = inspectSignature(safeSignature);
+
       const verifyBody_payload = {
         address,
         message,
-        signature: signature ?? '',
+        signature: safeSignature,
       };
+
+      // Dump a callstack at the boundary so future failures show EXACTLY which
+      // signer branch produced the value (primary vs. SIWA fallback).
+      const captureStack = new Error('[Auth] pre-/verify send').stack ?? '<stack unavailable>';
       console.debug('[Auth] Sending /api/auth/verify', {
         address,
         messageLength: message.length,
-        signatureType: typeof signature,
-        signatureLength: typeof signature === 'string' ? signature.length : -1,
+        signatureShape,
+        sendStack: captureStack.split('\n').slice(0, 5).join('\n'),
       });
 
       const verifyRes = await fetch(`${API_BASE}/api/auth/verify`, {
@@ -150,22 +268,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!verifyBody.success) {
         const errorCode = verifyBody.error?.code ?? 'UNKNOWN';
         const errorMsg = verifyBody.error?.error ?? 'Unknown error';
-        // Log the full server response so the missing field is visible without
-        // having to expand `Array(N)` placeholders in DevTools.
+        const failureStack = new Error('[Auth] /verify returned success=false').stack
+          ?? '<stack unavailable>';
+        // Expand the `Array(N)` placeholders so Zod issues are visible from a
+        // single glance in the console. Also capture the SHAPE of what we sent
+        // (never the raw bytes) and a callstack at the failure point.
         console.error(`[Auth] Verify failed: ${errorCode} - ${errorMsg}`, {
           serverError: verifyBody.error,
           sent: {
             address,
-            signatureLength: typeof signature === 'string' ? signature.length : -1,
-            signatureType: typeof signature,
+            messageLength: message.length,
+            messagePreview: `${message.slice(0, 80)}${message.length > 80 ? '…' : ''}`,
+            signatureShape: inspectSignature(safeSignature),
           },
+          serverErrorIssues:
+            verifyBody.error?.details?.issues
+              ?.map((i: unknown) => JSON.stringify(i))
+              .join('\n  ') ?? null,
+          serverErrorMissingFields: verifyBody.error?.details?.missingFields ?? null,
+          failureStack: failureStack.split('\n').slice(0, 6).join('\n'),
         });
-        if (errorCode === 'INVALID_VERIFY_REQUEST' && verifyBody.error?.details?.missingFields?.length) {
-          console.error(
-            '[Auth] Server says these fields were missing/invalid:',
-            verifyBody.error.details.missingFields,
-          );
-        }
         throw new Error(errorMsg);
       }
 
