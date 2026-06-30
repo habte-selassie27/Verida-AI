@@ -83,13 +83,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     setIsAuthenticating(true);
     try {
+      if (!address) {
+        throw new Error('No wallet address available — connect your wallet first.');
+      }
+
       // Step 1: Get nonce
       const nonceRes = await fetch(`${API_BASE}/api/auth/nonce`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ address }),
       });
-      const nonceBody = await nonceRes.json() as {
+      const nonceBody = (await nonceRes.json()) as {
         data: { message: string; nonce: string; expiresAt: number };
         success: boolean;
       };
@@ -101,22 +105,72 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Sign via wallet adapter
       const signature = await signMessage(message);
 
+      // Diagnostics — log a safe preview of what we are about to send.
+      // We never log full signatures; only type, char length, and hex-character prefix.
+      const sigLooksHex = typeof signature === 'string'
+        && /^[0-9a-f]+$/i.test(signature.replace(/^0x/, ''));
+      console.debug('[Auth] Obtained wallet signature', {
+        signatureType: typeof signature,
+        signatureLength: typeof signature === 'string' ? signature.length : -1,
+        signatureStrippedLength: typeof signature === 'string'
+          ? signature.replace(/^0x/, '').length
+          : -1,
+        signaturePrefixSafe: typeof signature === 'string'
+          ? `${signature.slice(0, 12)}…`
+          : '<n/a>',
+        signatureLooksHex: sigLooksHex,
+      });
+
       // Step 3: Verify signature and get JWT
+      // Strip undefined values explicitly so JSON.stringify cannot drop a
+      // required field silently. The server-side Zod schema treats missing
+      // fields as invalid.
+      const verifyBody_payload = {
+        address,
+        message,
+        signature: signature ?? '',
+      };
+      console.debug('[Auth] Sending /api/auth/verify', {
+        address,
+        messageLength: message.length,
+        signatureType: typeof signature,
+        signatureLength: typeof signature === 'string' ? signature.length : -1,
+      });
+
       const verifyRes = await fetch(`${API_BASE}/api/auth/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ address, message, signature }),
+        body: JSON.stringify(verifyBody_payload),
       });
-      const verifyBody = await verifyRes.json() as {
+      const verifyBody = (await verifyRes.json()) as {
         data?: { address: string; expiresIn: string; token: string };
-        error?: { code: string; error: string; details?: unknown };
+        error?: { code: string; error: string; details?: { issues?: unknown[]; missingFields?: string[]; summary?: string } };
         success: boolean;
       };
       if (!verifyBody.success) {
         const errorCode = verifyBody.error?.code ?? 'UNKNOWN';
         const errorMsg = verifyBody.error?.error ?? 'Unknown error';
-        console.error(`[Auth] Verify failed: ${errorCode} - ${errorMsg}`, verifyBody.error?.details);
+        // Log the full server response so the missing field is visible without
+        // having to expand `Array(N)` placeholders in DevTools.
+        console.error(`[Auth] Verify failed: ${errorCode} - ${errorMsg}`, {
+          serverError: verifyBody.error,
+          sent: {
+            address,
+            signatureLength: typeof signature === 'string' ? signature.length : -1,
+            signatureType: typeof signature,
+          },
+        });
+        if (errorCode === 'INVALID_VERIFY_REQUEST' && verifyBody.error?.details?.missingFields?.length) {
+          console.error(
+            '[Auth] Server says these fields were missing/invalid:',
+            verifyBody.error.details.missingFields,
+          );
+        }
         throw new Error(errorMsg);
+      }
+
+      if (!verifyBody.data) {
+        throw new Error('Auth verify succeeded but no token payload was returned.');
       }
 
       storeToken(verifyBody.data.token, verifyBody.data.expiresIn);

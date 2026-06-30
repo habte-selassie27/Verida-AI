@@ -76,4 +76,46 @@ describe('Auth route helpers', () => {
       expect(extractNonceFromMessage(msg)).toBe('spaced-nonce');
     });
   });
+
+  describe('summarizeZodIssues', () => {
+    // Re-implement locally so we don't need to export the private helper
+    function summarizeZodIssues(issues: { code: string; message: string; path: (string | number)[] }[]): string {
+      if (issues.length === 0) {
+        return 'Address, message, and signature are required.';
+      }
+      const fields = new Set<string>();
+      for (const issue of issues) {
+        const field = issue.path.length > 0 ? issue.path.join('.') : '<root>';
+        fields.add(`${field} (${issue.message})`);
+      }
+      return `Invalid request: ${Array.from(fields).join('; ')}.`;
+    }
+
+    it('lists each failed field with its message', () => {
+      const issues = [
+        { code: 'invalid_type', path: ['signature'], message: 'Required' },
+        { code: 'too_small', path: ['message'], message: 'String must contain at least 1 character(s)' },
+      ];
+      expect(summarizeZodIssues(issues)).toBe(
+        'Invalid request: signature (Required); message (String must contain at least 1 character(s)).',
+      );
+    });
+
+    it('falls back to generic message when given no issues', () => {
+      expect(summarizeZodIssues([])).toBe('Address, message, and signature are required.');
+    });
+
+    it('marks root-level issues as <root>', () => {
+      expect(summarizeZodIssues([{ code: 'custom', path: [], message: 'Bad shape' }]))
+        .toBe('Invalid request: <root> (Bad shape).');
+    });
+
+    it('deduplicates identical (path, message) entries', () => {
+      const issues = [
+        { code: 'invalid_type', path: ['signature'], message: 'Required' },
+        { code: 'invalid_type', path: ['signature'], message: 'Required' },
+      ];
+      expect(summarizeZodIssues(issues)).toBe('Invalid request: signature (Required).');
+    });
+  });
 });

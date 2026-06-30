@@ -179,17 +179,37 @@ authRouter.post(
   }),
 );
 
+function summarizeZodIssues(issues: z.ZodIssue[]): string {
+  if (issues.length === 0) {
+    return 'Address, message, and signature are required.';
+  }
+  const fields = new Set<string>();
+  for (const issue of issues) {
+    const field = issue.path.length > 0 ? issue.path.join('.') : '<root>';
+    fields.add(`${field} (${issue.message})`);
+  }
+  // Also log server-side so we have a permanent record outside the client
+  console.warn('[Auth] /verify validation failed:', { issues });
+  return `Invalid request: ${Array.from(fields).join('; ')}.`;
+}
+
 authRouter.post(
   '/verify',
   asyncHandler(async (request: Request, response: Response): Promise<void> => {
     const parsed = verifyRequestSchema.safeParse(request.body);
 
     if (!parsed.success) {
+      const summary = summarizeZodIssues(parsed.error.issues);
       response.status(400).json({
         error: {
           code: 'INVALID_VERIFY_REQUEST',
-          details: { issues: parsed.error.issues },
-          error: 'Address, message, and signature are required.',
+          details: {
+            issues: parsed.error.issues,
+            missingFields: parsed.error.issues
+              .filter((i) => i.code === 'invalid_type')
+              .map((i) => i.path.join('.') || '<root>'),
+          },
+          error: summary,
         },
         success: false,
       });
