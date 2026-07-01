@@ -56,10 +56,54 @@ function WalletContextInner({ children }: { children: ReactNode }) {
   // Petra's adapter returns signature data in several shapes across versions:
   //   - adapterSignMessage(...) can return a hex string OR { signature: hex }
   //   - adapterSignIn (SIWA) returns { ..., signature: { publicKey, signature } }
-  //     where values may be hex strings OR Uint8Array.
+  //     where values may be hex strings, Uint8Array, OR HexString instances
+  //     (a class from @aptos-labs/ts-sdk with a .hex() method).
   // The backend (/api/auth/verify) expects a single canonical form:
   //   '0x' + 64-char Ed25519 publicKeyHex + 64-char Ed25519 signatureHex
   // These helpers coerce any of those variants into clean lowercase hex.
+
+  /**
+   * Safely introspect an unknown value for diagnostic logging.
+   * Never logs raw signature bytes — only the type, constructor name, and a
+   * short hex prefix if the value is already a recognized hex type.
+   */
+  function describeValue(value: unknown): Record<string, unknown> {
+    if (value === null) return { kind: 'null' };
+    if (value === undefined) return { kind: 'undefined' };
+    const t = typeof value;
+    const tag: Record<string, unknown> = { kind: t };
+    if (value instanceof Uint8Array) {
+      tag.kind = 'Uint8Array';
+      tag.length = value.length;
+      const prefix = Array.from(value.slice(0, 6))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('');
+      tag.hexPrefix = `0x${prefix}`;
+    } else if (t === 'object') {
+      const obj = value as Record<string, unknown>;
+      tag.ctor = obj.constructor?.name ?? null;
+      tag.keys = Object.keys(obj).slice(0, 8);
+      // Check for HexString from @aptos-labs/ts-sdk
+      tag.hasHexMethod = typeof (obj as { hex?: () => string }).hex === 'function';
+      tag.hasToStringMethod = typeof (obj as { toString?: () => string }).toString === 'function';
+      // Safe JSON snippet (always truncated, never the full value)
+      try {
+        const serialized = JSON.stringify(obj);
+        tag.jsonSnippet = serialized.length > 80
+          ? `${serialized.slice(0, 80)}…`
+          : serialized;
+      } catch {
+        tag.jsonSnippet = '<unserializable>';
+      }
+    }
+    if (t === 'string') {
+      const str = value as string;
+      tag.length = str.length;
+      tag.prefix = str.length > 12 ? `${str.slice(0, 12)}…` : str;
+      tag.startsWith0x = str.startsWith('0x');
+    }
+    return tag;
+  }
 
   const normalizeHexString = useCallback((value: unknown): string | null => {
     if (typeof value !== 'string') return null;
@@ -78,6 +122,27 @@ function WalletContextInner({ children }: { children: ReactNode }) {
         .map((b) => b.toString(16).padStart(2, '0'))
         .join('');
     }
+    // Handle HexString from @aptos-labs/ts-sdk — it has a .hex() method that
+    // returns the canonical hex string with 0x prefix.
+    if (
+      value !== null &&
+      typeof value === 'object' &&
+      typeof (value as { hex?: () => string }).hex === 'function'
+    ) {
+      const raw = (value as { hex: () => string }).hex();
+      return normalizeHexString(raw);
+    }
+    // Generic last-resort: some adapters return objects with toString() that
+    // produces hex (e.g. old Martian wallet responses).
+    if (
+      value !== null &&
+      typeof value === 'object' &&
+      typeof (value as { toString?: () => string }).toString === 'function'
+    ) {
+      const raw = (value as { toString: () => string }).toString();
+      const hex = normalizeHexString(raw);
+      if (hex) return hex;
+    }
     return normalizeHexString(value);
   }, [normalizeHexString]);
 
@@ -90,15 +155,27 @@ function WalletContextInner({ children }: { children: ReactNode }) {
           nonce: Date.now().toString(),
         });
 
+        // Diagnostic: log the EXACT response shape safely.
+        console.debug('[Wallet] adapterSignMessage response', describeValue(response));
+
         const candidate =
           typeof response === 'string'
             ? response
             : (response as { signature?: unknown })?.signature;
+
+        if (typeof candidate !== 'string') {
+          console.debug('[Wallet] adapterSignMessage candidate (extracted)', describeValue(candidate));
+        }
+
         // Use bytesToHex (not normalizeHexString) so wallets that return
-        // { signature: Uint8Array } per AIP-62 are also handled.
+        // { signature: Uint8Array } per AIP-62 or HexString from ts-sdk are handled.
         const sigHex = bytesToHex(candidate);
 
         if (!sigHex) {
+          console.error(
+            '[Wallet] signMessage — bytesToHex failed for candidate',
+            describeValue(candidate),
+          );
           throw new Error('Wallet signMessage returned a non-hex signature payload.');
         }
         if (sigHex.length !== 128) {
