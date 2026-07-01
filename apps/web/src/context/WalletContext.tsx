@@ -1,17 +1,12 @@
-import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
 import { AptosWalletAdapterProvider, useWallet } from '@aptos-labs/wallet-adapter-react';
 import type { InputTransactionData } from '@aptos-labs/wallet-adapter-react';
 import { AnySignature, Deserializer } from '@aptos-labs/ts-sdk';
 
-interface DirectAptosWallet {
+interface WalletProvider {
   connect: () => Promise<{ address: string }>;
   disconnect: () => Promise<void>;
-  signAndSubmitTransaction: (tx: {
-    type: string;
-    function: string;
-    arguments: unknown[];
-    type_arguments: string[];
-  }) => Promise<{ hash: string }>;
+  signAndSubmitTransaction: (tx: Record<string, unknown>) => Promise<{ hash: string }>;
   signMessage: (input: { message: string; nonce: string }) => Promise<{ signature: string }>;
   account?: { address: string; publicKey?: string };
   network?: () => Promise<string>;
@@ -19,7 +14,10 @@ interface DirectAptosWallet {
 
 declare global {
   interface Window {
-    aptos?: DirectAptosWallet;
+    aptos?: WalletProvider;
+    martian?: WalletProvider;
+    petra?: WalletProvider;
+    pontem?: WalletProvider;
   }
 }
 
@@ -69,26 +67,56 @@ function WalletContextInner({ children }: { children: ReactNode }) {
     if (adapterConnected) fetchNetwork();
   }, [adapterConnected, wallets]);
 
-  const detectDirectWalletName = useCallback((): string => {
-    const win = window as unknown as Record<string, unknown>;
-    if (win.martian) return 'Martian';
-    if (win.petra) return 'Petra';
-    if (typeof window.aptos !== 'undefined') return 'Aptos Wallet';
-    return 'Aptos Wallet';
-  }, []);
+  const directProviderRef = useRef<WalletProvider | null>(null);
 
   const connect = useCallback(async () => {
-    // First: try direct wallet via window.aptos (catches Martian, etc.
-    // that the adapter doesn't detect). Try this BEFORE the adapter
-    // path so we prefer the user's actual extension wallet.
-    if (typeof window !== 'undefined' && window.aptos) {
-      try {
-        const result = await window.aptos.connect();
-        const name = detectDirectWalletName();
-        setDirectWallet({ address: result.address, name });
-        return;
-      } catch (e) {
-        console.warn('[WalletContext] Direct wallet connect failed, trying adapter...', e);
+    // First: try any direct wallet provider (window.martian, window.aptos,
+    // window.petra, window.pontem). Poll for up to 2s since extensions
+    // inject asynchronously and may not be ready on first check.
+    if (typeof window !== 'undefined') {
+      const candidates: Array<{ key: string; name: string }> = [
+        { key: 'martian', name: 'Martian' },
+        { key: 'aptos', name: 'Aptos Wallet' },
+        { key: 'petra', name: 'Petra' },
+        { key: 'pontem', name: 'Pontem' },
+      ];
+
+      const win = window as unknown as Record<string, unknown>;
+      const poll = (): Promise<{ provider: WalletProvider; name: string } | null> =>
+        new Promise((resolve) => {
+          const check = (): boolean => {
+            for (const { key, name } of candidates) {
+              const p = win[key] as WalletProvider | undefined;
+              if (p && typeof p.connect === 'function') {
+                resolve({ provider: p, name });
+                return true;
+              }
+            }
+            return false;
+          };
+          if (check()) return;
+          let tries = 0;
+          const iv = setInterval(() => {
+            tries++;
+            if (check()) {
+              clearInterval(iv);
+            } else if (tries >= 10) {
+              clearInterval(iv);
+              resolve(null);
+            }
+          }, 200);
+        });
+
+      const found = await poll();
+      if (found) {
+        try {
+          const result = await found.provider.connect();
+          directProviderRef.current = found.provider;
+          setDirectWallet({ address: result.address, name: found.name });
+          return;
+        } catch (e) {
+          console.warn('[WalletContext] Direct provider connect failed, trying adapter...', e);
+        }
       }
     }
 
@@ -114,13 +142,14 @@ function WalletContextInner({ children }: { children: ReactNode }) {
     }
 
     throw new Error('No Aptos wallet detected. Please install Petra, Martian, or Pontem.');
-  }, [wallets, adapterConnect, detectDirectWalletName]);
+  }, [wallets, adapterConnect]);
 
   const disconnect = useCallback(async () => {
     if (directWallet) {
       try {
-        await window.aptos?.disconnect();
+        await directProviderRef.current?.disconnect();
       } catch { /* ignore */ }
+      directProviderRef.current = null;
       setDirectWallet(null);
       return;
     }
@@ -134,13 +163,14 @@ function WalletContextInner({ children }: { children: ReactNode }) {
   const signAndSubmitTransaction = useCallback(
     async (transaction: InputTransactionData) => {
       if (directWallet) {
-        if (!window.aptos) throw new Error('Wallet not available');
+        const provider = directProviderRef.current;
+        if (!provider?.signAndSubmitTransaction) throw new Error('Wallet does not support signing');
         const payload = transaction.data as unknown as {
           function: string;
           functionArguments: unknown[];
           typeArguments: string[];
         };
-        const result = await window.aptos.signAndSubmitTransaction({
+        const result = await provider.signAndSubmitTransaction({
           type: 'entry_function_payload',
           function: payload.function,
           arguments: payload.functionArguments,
@@ -256,8 +286,9 @@ function WalletContextInner({ children }: { children: ReactNode }) {
     async (message: string): Promise<string> => {
       // Direct wallet path
       if (directWallet) {
-        if (!window.aptos) throw new Error('Wallet not available');
-        const response = await window.aptos.signMessage({
+        const provider = directProviderRef.current;
+        if (!provider?.signMessage) throw new Error('Wallet does not support message signing');
+        const response = await provider.signMessage({
           message,
           nonce: Date.now().toString(),
         });
@@ -267,7 +298,7 @@ function WalletContextInner({ children }: { children: ReactNode }) {
         if (!sigHex || sigHex.length !== 128) {
           throw new Error(`Direct wallet signature length is ${sigHex?.length ?? 'unknown'} hex chars; expected 128.`);
         }
-        const pubKeyHex = bytesToHex(window.aptos.account?.publicKey);
+        const pubKeyHex = bytesToHex(provider.account?.publicKey);
         if (!pubKeyHex || pubKeyHex.length !== 64) {
           throw new Error('Direct wallet signMessage: cannot read publicKey.');
         }
