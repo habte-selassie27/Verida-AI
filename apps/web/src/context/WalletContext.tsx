@@ -33,8 +33,8 @@ function WalletContextInner({ children }: { children: ReactNode }) {
     async function fetchNetwork() {
       try {
         if (connected && wallets.length > 0) {
-          const petra = wallets.find((w) => w.name.toLowerCase().includes('petra'));
-          if (petra) setNetworkName(petra.name);
+          const connectedWallet = wallets.find((w) => w.name);
+          if (connectedWallet) setNetworkName(connectedWallet.name);
         }
       } catch {
         /* ignore */
@@ -47,12 +47,23 @@ function WalletContextInner({ children }: { children: ReactNode }) {
     if (wallets.length === 0)
       throw new Error('No Aptos wallet detected. Please install Petra, Martian, or Pontem.');
 
-    const preferred = ['Petra', 'Martian', 'Pontem'];
+    const preferred = ['martian', 'petra', 'pontem'];
     const target =
-      preferred.find((name) => wallets.some((w) => w.name === name)) ?? wallets[0]?.name;
+      preferred.find((name) =>
+        wallets.some((w) => w.name.toLowerCase().includes(name)),
+      ) ?? wallets[0]?.name;
 
-    if (!target) throw new Error('No wallet found');
-    await adapterConnect(target);
+    // If we found by partial match, use the actual wallet name
+    const matchedWallet = target
+      ? wallets.find(
+          (w) =>
+            w.name.toLowerCase().includes(target) ||
+            w.name === target,
+        )
+      : null;
+
+    if (!matchedWallet) throw new Error('No wallet found');
+    await adapterConnect(matchedWallet.name);
   }, [wallets, adapterConnect]);
 
   const disconnect = useCallback(async () => {
@@ -275,7 +286,7 @@ function WalletContextInner({ children }: { children: ReactNode }) {
 
 export function WalletProvider({ children }: { children: ReactNode }) {
   return (
-    <AptosWalletAdapterProvider autoConnect={false} optInWallets={['Martian', 'Petra']}>
+    <AptosWalletAdapterProvider autoConnect={false}>
       <WalletContextInner>{children}</WalletContextInner>
     </AptosWalletAdapterProvider>
   );
