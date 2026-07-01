@@ -3,6 +3,26 @@ import { AptosWalletAdapterProvider, useWallet } from '@aptos-labs/wallet-adapte
 import type { InputTransactionData } from '@aptos-labs/wallet-adapter-react';
 import { AnySignature, Deserializer } from '@aptos-labs/ts-sdk';
 
+interface DirectAptosWallet {
+  connect: () => Promise<{ address: string }>;
+  disconnect: () => Promise<void>;
+  signAndSubmitTransaction: (tx: {
+    type: string;
+    function: string;
+    arguments: unknown[];
+    type_arguments: string[];
+  }) => Promise<{ hash: string }>;
+  signMessage: (input: { message: string; nonce: string }) => Promise<{ signature: string }>;
+  account?: { address: string; publicKey?: string };
+  network?: () => Promise<string>;
+}
+
+declare global {
+  interface Window {
+    aptos?: DirectAptosWallet;
+  }
+}
+
 interface WalletState {
   connected: boolean;
   address: string | null;
@@ -21,18 +41,24 @@ function WalletContextInner({ children }: { children: ReactNode }) {
     connect: adapterConnect,
     disconnect: adapterDisconnect,
     account,
-    connected,
+    connected: adapterConnected,
     wallets,
     signAndSubmitTransaction: adapterSignAndSubmit,
     signMessage: adapterSignMessage,
     signIn: adapterSignIn,
   } = useWallet();
   const [networkName, setNetworkName] = useState<string | null>(null);
+  const [directWallet, setDirectWallet] = useState<{
+    address: string;
+    name: string;
+  } | null>(null);
+
+  const connected = adapterConnected || directWallet !== null;
 
   useEffect(() => {
     async function fetchNetwork() {
       try {
-        if (connected && wallets.length > 0) {
+        if (adapterConnected && wallets.length > 0) {
           const connectedWallet = wallets.find((w) => w.name);
           if (connectedWallet) setNetworkName(connectedWallet.name);
         }
@@ -40,47 +66,92 @@ function WalletContextInner({ children }: { children: ReactNode }) {
         /* ignore */
       }
     }
-    if (connected) fetchNetwork();
-  }, [connected, wallets]);
+    if (adapterConnected) fetchNetwork();
+  }, [adapterConnected, wallets]);
+
+  const detectDirectWalletName = useCallback((): string => {
+    const win = window as unknown as Record<string, unknown>;
+    if (win.martian) return 'Martian';
+    if (win.petra) return 'Petra';
+    if (typeof window.aptos !== 'undefined') return 'Aptos Wallet';
+    return 'Aptos Wallet';
+  }, []);
 
   const connect = useCallback(async () => {
-    if (wallets.length === 0)
-      throw new Error('No Aptos wallet detected. Please install Petra, Martian, or Pontem.');
+    if (wallets.length > 0) {
+      const preferred = ['martian', 'petra', 'pontem'];
+      const target =
+        preferred.find((name) =>
+          wallets.some((w) => w.name.toLowerCase().includes(name)),
+        ) ?? wallets[0]?.name;
 
-    const preferred = ['martian', 'petra', 'pontem'];
-    const target =
-      preferred.find((name) =>
-        wallets.some((w) => w.name.toLowerCase().includes(name)),
-      ) ?? wallets[0]?.name;
+      const matchedWallet = target
+        ? wallets.find(
+            (w) =>
+              w.name.toLowerCase().includes(target) ||
+              w.name === target,
+          )
+        : null;
 
-    // If we found by partial match, use the actual wallet name
-    const matchedWallet = target
-      ? wallets.find(
-          (w) =>
-            w.name.toLowerCase().includes(target) ||
-            w.name === target,
-        )
-      : null;
+      if (!matchedWallet) throw new Error('No wallet found');
+      await adapterConnect(matchedWallet.name);
+      return;
+    }
 
-    if (!matchedWallet) throw new Error('No wallet found');
-    await adapterConnect(matchedWallet.name);
-  }, [wallets, adapterConnect]);
+    // Fallback: connect via window.aptos (handles Martian, etc.)
+    if (typeof window !== 'undefined' && window.aptos) {
+      try {
+        const result = await window.aptos.connect();
+        const name = detectDirectWalletName();
+        setDirectWallet({ address: result.address, name });
+        return;
+      } catch (e) {
+        throw new Error(
+          `Failed to connect via window.aptos: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+
+    throw new Error('No Aptos wallet detected. Please install Petra, Martian, or Pontem.');
+  }, [wallets, adapterConnect, detectDirectWalletName]);
 
   const disconnect = useCallback(async () => {
+    if (directWallet) {
+      try {
+        await window.aptos?.disconnect();
+      } catch { /* ignore */ }
+      setDirectWallet(null);
+      return;
+    }
     try {
       await adapterDisconnect();
     } catch {
       /* ignore */
     }
-  }, [adapterDisconnect]);
+  }, [adapterDisconnect, directWallet]);
 
   const signAndSubmitTransaction = useCallback(
     async (transaction: InputTransactionData) => {
+      if (directWallet) {
+        if (!window.aptos) throw new Error('Wallet not available');
+        const payload = transaction.data as unknown as {
+          function: string;
+          functionArguments: unknown[];
+          typeArguments: string[];
+        };
+        const result = await window.aptos.signAndSubmitTransaction({
+          type: 'entry_function_payload',
+          function: payload.function,
+          arguments: payload.functionArguments,
+          type_arguments: payload.typeArguments ?? [],
+        });
+        return { hash: result.hash };
+      }
       if (!adapterSignAndSubmit) throw new Error('Wallet does not support signing');
       const result = await adapterSignAndSubmit(transaction);
       return { hash: result.hash };
     },
-    [adapterSignAndSubmit],
+    [adapterSignAndSubmit, directWallet],
   );
 
   // ----- Signature normalizers ---------------------------------------------
@@ -182,6 +253,26 @@ function WalletContextInner({ children }: { children: ReactNode }) {
 
   const signMessage = useCallback(
     async (message: string): Promise<string> => {
+      // Direct wallet path
+      if (directWallet) {
+        if (!window.aptos) throw new Error('Wallet not available');
+        const response = await window.aptos.signMessage({
+          message,
+          nonce: Date.now().toString(),
+        });
+        const sigHex = typeof response.signature === 'string'
+          ? response.signature
+          : bytesToHex(response.signature);
+        if (!sigHex || sigHex.length !== 128) {
+          throw new Error(`Direct wallet signature length is ${sigHex?.length ?? 'unknown'} hex chars; expected 128.`);
+        }
+        const pubKeyHex = bytesToHex(window.aptos.account?.publicKey);
+        if (!pubKeyHex || pubKeyHex.length !== 64) {
+          throw new Error('Direct wallet signMessage: cannot read publicKey.');
+        }
+        return `0x${pubKeyHex}${sigHex}`;
+      }
+
       // Primary path: AIP-61 adapter signMessage
       if (adapterSignMessage) {
         try {
@@ -260,11 +351,11 @@ function WalletContextInner({ children }: { children: ReactNode }) {
 
       return `0x${pubKeyHex}${sigHex}`;
     },
-    [adapterSignMessage, adapterSignIn, account, wallets, bytesToHex, extractEd25519Signature],
+    [adapterSignMessage, adapterSignIn, account, wallets, bytesToHex, extractEd25519Signature, directWallet],
   );
 
-  const address = account?.address ? String(account.address) : null;
-  const walletNames = wallets.map((w) => w.name);
+  const address = directWallet?.address ?? (account?.address ? String(account.address) : null);
+  const walletNames = directWallet ? [directWallet.name] : wallets.map((w) => w.name);
 
   return (
     <WalletContext.Provider
