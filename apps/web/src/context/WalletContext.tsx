@@ -78,6 +78,21 @@ function WalletContextInner({ children }: { children: ReactNode }) {
   }, []);
 
   const connect = useCallback(async () => {
+    // First: try direct wallet via window.aptos (catches Martian, etc.
+    // that the adapter doesn't detect). Try this BEFORE the adapter
+    // path so we prefer the user's actual extension wallet.
+    if (typeof window !== 'undefined' && window.aptos) {
+      try {
+        const result = await window.aptos.connect();
+        const name = detectDirectWalletName();
+        setDirectWallet({ address: result.address, name });
+        return;
+      } catch (e) {
+        console.warn('[WalletContext] Direct wallet connect failed, trying adapter...', e);
+      }
+    }
+
+    // Second: adapter-detected wallets (Petra, etc.)
     if (wallets.length > 0) {
       const preferred = ['martian', 'petra', 'pontem'];
       const target =
@@ -96,20 +111,6 @@ function WalletContextInner({ children }: { children: ReactNode }) {
       if (!matchedWallet) throw new Error('No wallet found');
       await adapterConnect(matchedWallet.name);
       return;
-    }
-
-    // Fallback: connect via window.aptos (handles Martian, etc.)
-    if (typeof window !== 'undefined' && window.aptos) {
-      try {
-        const result = await window.aptos.connect();
-        const name = detectDirectWalletName();
-        setDirectWallet({ address: result.address, name });
-        return;
-      } catch (e) {
-        throw new Error(
-          `Failed to connect via window.aptos: ${e instanceof Error ? e.message : String(e)}`,
-        );
-      }
     }
 
     throw new Error('No Aptos wallet detected. Please install Petra, Martian, or Pontem.');
