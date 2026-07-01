@@ -1,37 +1,38 @@
 import { useState, useRef, useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
+import { AnimatePresence, motion } from 'framer-motion';
+import { List, X, Wallet } from '@phosphor-icons/react';
 import { Button } from '../ui/Button';
 import { useAuth } from '../../context/AuthContext';
 import { useWalletContext } from '../../context/WalletContext';
 import './Navbar.css';
-
-const menuIcon = (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-    <line x1="4" y1="6" x2="20" y2="6" />
-    <line x1="4" y1="12" x2="20" y2="12" />
-    <line x1="4" y1="18" x2="20" y2="18" />
-  </svg>
-);
-
-const closeIcon = (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-    <line x1="18" y1="6" x2="6" y2="18" />
-    <line x1="6" y1="6" x2="18" y2="18" />
-  </svg>
-);
-
-const walletIcon = (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <rect x="2" y="4" width="20" height="16" rx="2" />
-    <path d="M16 12h4v2h-4z" />
-  </svg>
-);
 
 const linkClass = ({ isActive }: { isActive: boolean }) => (isActive ? 'active' : '');
 
 function truncateAddress(addr: string): string {
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 }
+
+const mobileMenuVariants = {
+  hidden: { x: '100%' },
+  visible: { x: 0, transition: { type: 'spring', stiffness: 300, damping: 30 } },
+  exit: { x: '100%', transition: { duration: 0.15, ease: [0.32, 0.72, 0, 1] } },
+};
+
+const overlayVariants = {
+  hidden: { opacity: 0 },
+  visible: { opacity: 1, transition: { duration: 0.2 } },
+  exit: { opacity: 0, transition: { duration: 0.15 } },
+};
+
+const navItemVariants = {
+  hidden: { opacity: 0, x: 20 },
+  visible: (i: number) => ({
+    opacity: 1,
+    x: 0,
+    transition: { delay: 0.08 * i, duration: 0.2, ease: [0.16, 1, 0.3, 1] },
+  }),
+};
 
 export function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -50,10 +51,18 @@ export function Navbar() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  useEffect(() => {
+    if (menuOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => { document.body.style.overflow = ''; };
+  }, [menuOpen]);
+
   const handleConnect = async () => {
     try {
       await connect();
-      // SIWE login is triggered automatically by AuthProvider when wallet connects
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to connect wallet');
     }
@@ -64,6 +73,12 @@ export function Navbar() {
     logout();
     setWalletDropdown(false);
   };
+
+  const navLinks = [
+    { to: '/', label: 'Marketplace', end: true },
+    { to: '/upload', label: 'Upload' },
+    { to: '/dashboard', label: 'Dashboard' },
+  ];
 
   return (
     <header className="navbar">
@@ -77,9 +92,11 @@ export function Navbar() {
         </div>
 
         <nav className="navbar-center">
-          <NavLink to="/" end className={linkClass}>Marketplace</NavLink>
-          <NavLink to="/upload" className={linkClass}>Upload</NavLink>
-          <NavLink to="/dashboard" className={linkClass}>Dashboard</NavLink>
+          {navLinks.map((link) => (
+            <NavLink key={link.to} to={link.to} end={link.end} className={linkClass}>
+              {link.label}
+            </NavLink>
+          ))}
         </nav>
 
         <div className="navbar-right">
@@ -89,7 +106,7 @@ export function Navbar() {
           </div>
 
           {connected && address ? (
-            <div ref={dropdownRef} style={{ position: 'relative' }}>
+            <div ref={dropdownRef} className="wallet-wrapper">
               <button
                 className="wallet-btn-connected"
                 onClick={() => setWalletDropdown((prev) => !prev)}
@@ -98,82 +115,107 @@ export function Navbar() {
                 {truncateAddress(address)}
                 {isAuthenticating && <span className="auth-spinner" />}
               </button>
-              {walletDropdown && (
-                <div className="wallet-dropdown">
-                  <div className="wallet-dropdown-item" style={{ fontSize: 11, color: 'var(--text-tertiary)', cursor: 'default' }}>
-                    {isAuthenticated ? 'Authenticated' : 'Read-only mode'}
-                  </div>
-                  <NavLink to={`/publishers/${address}`} className="wallet-dropdown-item" onClick={() => setWalletDropdown(false)}>
-                    View Profile
-                  </NavLink>
-                  <NavLink to="/settings" className="wallet-dropdown-item" onClick={() => setWalletDropdown(false)}>
-                    Settings
-                  </NavLink>
-                  {!isAuthenticated && (
-                    <button
-                      className="wallet-dropdown-item"
-                      onClick={() => { login(); setWalletDropdown(false); }}
-                    >
-                      Sign In
-                    </button>
-                  )}
-                  <button
-                    className="wallet-dropdown-item"
-                    onClick={handleDisconnect}
+              <AnimatePresence>
+                {walletDropdown && (
+                  <motion.div
+                    className="wallet-dropdown"
+                    initial={{ opacity: 0, scale: 0.95, y: -4 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.95, y: -4 }}
+                    transition={{ duration: 0.12, ease: [0.16, 1, 0.3, 1] }}
                   >
-                    Disconnect
-                  </button>
-                </div>
-              )}
+                    <div className="wallet-dropdown-item wallet-dropdown-status">
+                      {isAuthenticated ? 'Authenticated' : 'Read-only mode'}
+                    </div>
+                    <NavLink to={`/publishers/${address}`} className="wallet-dropdown-item" onClick={() => setWalletDropdown(false)}>
+                      View Profile
+                    </NavLink>
+                    <NavLink to="/settings" className="wallet-dropdown-item" onClick={() => setWalletDropdown(false)}>
+                      Settings
+                    </NavLink>
+                    {!isAuthenticated && (
+                      <button
+                        className="wallet-dropdown-item"
+                        onClick={() => { login(); setWalletDropdown(false); }}
+                      >
+                        Sign In
+                      </button>
+                    )}
+                    <button className="wallet-dropdown-item" onClick={handleDisconnect}>
+                      Disconnect
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           ) : (
-            <Button variant="ghost" icon={walletIcon} onClick={handleConnect}>
+            <Button variant="ghost" icon={<Wallet size={16} />} onClick={handleConnect}>
               Connect Wallet
             </Button>
           )}
 
-          <Button
-            variant="icon"
-            icon={menuIcon}
-            onClick={() => setMenuOpen(true)}
+          <button
             className="navbar-hamburger"
-          />
+            onClick={() => setMenuOpen(true)}
+            aria-label="Open menu"
+          >
+            <List size={18} />
+          </button>
         </div>
       </div>
 
-      {menuOpen && (
-        <>
-          <div className="navbar-overlay" onClick={() => setMenuOpen(false)} />
-          <div className="navbar-mobile-menu">
-            <div className="navbar-mobile-header">
-              <button className="navbar-mobile-close" onClick={() => setMenuOpen(false)}>
-                {closeIcon}
-              </button>
-            </div>
-            <NavLink to="/" end className={linkClass} onClick={() => setMenuOpen(false)}>
-              Marketplace
-            </NavLink>
-            <NavLink to="/upload" className={linkClass} onClick={() => setMenuOpen(false)}>
-              Upload
-            </NavLink>
-            <NavLink to="/dashboard" className={linkClass} onClick={() => setMenuOpen(false)}>
-              Dashboard
-            </NavLink>
-            {connected && (
-              <button
-                className="navbar-mobile-disconnect"
-                onClick={() => {
-                  disconnect();
-                  logout();
-                  setMenuOpen(false);
-                }}
-              >
-                Disconnect
-              </button>
-            )}
-          </div>
-        </>
-      )}
+      <AnimatePresence>
+        {menuOpen && (
+          <>
+            <motion.div
+              className="navbar-overlay"
+              variants={overlayVariants}
+              initial="hidden"
+              animate="visible"
+              exit="exit"
+              onClick={() => setMenuOpen(false)}
+            />
+            <motion.div
+              className="navbar-mobile-menu"
+              variants={mobileMenuVariants}
+              initial="hidden"
+              animate="visible"
+              exit="exit"
+            >
+              <div className="navbar-mobile-header">
+                <span className="navbar-mobile-logo">VERIDA</span>
+                <button className="navbar-mobile-close" onClick={() => setMenuOpen(false)} aria-label="Close menu">
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="navbar-mobile-nav">
+                {navLinks.map((link, i) => (
+                  <motion.div key={link.to} custom={i} variants={navItemVariants} initial="hidden" animate="visible">
+                    <NavLink to={link.to} end={link.end} className={linkClass} onClick={() => setMenuOpen(false)}>
+                      {link.label}
+                    </NavLink>
+                  </motion.div>
+                ))}
+              </div>
+              {connected && (
+                <motion.button
+                  className="navbar-mobile-disconnect"
+                  custom={navLinks.length}
+                  variants={navItemVariants}
+                  initial="hidden"
+                  animate="visible"
+                  onClick={() => {
+                    handleDisconnect();
+                    setMenuOpen(false);
+                  }}
+                >
+                  Disconnect
+                </motion.button>
+              )}
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
     </header>
   );
 }

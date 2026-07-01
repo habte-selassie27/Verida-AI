@@ -6,6 +6,5 @@
 
 .main {
   flex: 1;
-  min-height: calc(100vh - 52px - 180px);
-  padding-top: 24px;
+  padding-top: var(--sp-6);
 }

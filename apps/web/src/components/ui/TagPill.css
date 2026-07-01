@@ -9,7 +9,10 @@
   background: var(--bg-raised);
   color: var(--text-tertiary);
   cursor: pointer;
-  transition: all 120ms ease;
+  transition:
+    background var(--dur-micro) var(--ease-out),
+    color var(--dur-micro) var(--ease-out),
+    border-color var(--dur-micro) var(--ease-out);
   line-height: 1;
   white-space: nowrap;
   user-select: none;
@@ -19,6 +22,10 @@
   background: var(--bg-overlay);
   color: var(--text-secondary);
   border-color: var(--border-mid);
+}
+
+.tag-pill:focus-visible {
+  box-shadow: var(--shadow-teal);
 }
 
 .tag-pill-active {

@@ -2,45 +2,56 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.5rem;
-  margin-top: 2rem;
+  gap: var(--sp-2);
+  margin-top: var(--sp-8);
 }
 
 .pagination-pages {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: 2px;
 }
 
 .pagination-page {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 2rem;
-  height: 2rem;
-  padding: 0 0.5rem;
-  border-radius: var(--radius);
-  font-size: 0.875rem;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 var(--sp-2);
+  border-radius: var(--r-md);
+  font-size: var(--text-sm);
   font-weight: 500;
-  border: 1px solid transparent;
+  border: 0.5px solid transparent;
   background: transparent;
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.15s ease;
+  font-family: var(--font-sans);
+  transition:
+    background var(--dur-micro) var(--ease-out),
+    color var(--dur-micro) var(--ease-out),
+    border-color var(--dur-micro) var(--ease-out);
 }
 
 .pagination-page:hover {
-  background: var(--color-surface);
-  color: var(--color-text);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+.pagination-page:focus-visible {
+  box-shadow: var(--shadow-teal);
 }
 
 .pagination-page.active {
-  background: var(--color-primary);
-  color: white;
-  border-color: var(--color-primary);
+  background: var(--teal-400);
+  color: #000;
+  border-color: var(--teal-400);
+  font-weight: 600;
 }
 
 .pagination-ellipsis {
-  color: var(--color-text-muted);
-  padding: 0 0.25rem;
+  color: var(--text-tertiary);
+  padding: 0 var(--sp-1);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
 }

@@ -1,4 +1,5 @@
 import { type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { motion } from 'framer-motion';
 import './Button.css';
 
 type ButtonVariant = 'primary' | 'ghost' | 'danger' | 'teal-outline' | 'icon';
@@ -11,6 +12,8 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   icon?: ReactNode;
   fullWidth?: boolean;
 }
+
+const springTap = { type: 'spring', stiffness: 400, damping: 17 };
 
 export function Button({
   variant = 'primary',
@@ -37,15 +40,18 @@ export function Button({
     .join(' ');
 
   return (
-    <button
+    <motion.button
       type={type}
       className={classes}
       disabled={disabled || loading}
       onClick={onClick}
+      whileHover={!disabled && !loading ? { scale: 1.02 } : undefined}
+      whileTap={!disabled && !loading ? { scale: 0.97 } : undefined}
+      transition={springTap}
       {...rest}
     >
       {loading ? null : icon}
       {children && <span className={loading ? 'btn-label' : ''}>{children}</span>}
-    </button>
+    </motion.button>
   );
 }

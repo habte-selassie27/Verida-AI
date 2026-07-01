@@ -1,7 +1,7 @@
 .footer {
   background: var(--bg-base);
   border-top: 0.5px solid var(--border-subtle);
-  padding: 32px 24px 24px;
+  padding: var(--sp-8) var(--sp-6) var(--sp-6);
 }
 
 .footer-inner {
@@ -9,25 +9,25 @@
   margin: 0 auto;
   display: grid;
   grid-template-columns: 1fr;
-  gap: 32px;
+  gap: var(--sp-8);
 }
 
 @media (min-width: 768px) {
   .footer-inner {
-    grid-template-columns: 1fr 1.5fr 1fr;
+    grid-template-columns: 1.5fr 1.5fr 1fr;
   }
 }
 
 .footer-brand {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--sp-3);
 }
 
 .footer-brand-top {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 
 .footer-logo-mark {
@@ -55,45 +55,15 @@
 
 .footer-tagline {
   font-family: var(--font-sans);
-  font-size: 13px;
+  font-size: var(--text-sm);
   color: var(--text-tertiary);
   max-width: 240px;
 }
 
-.footer-links {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 24px;
-}
-
-.footer-links-column h4 {
-  font-family: var(--font-sans);
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-tertiary);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  margin: 0 0 12px;
-}
-
-.footer-links-column a {
-  display: block;
-  font-family: var(--font-sans);
-  font-size: 13px;
-  color: var(--text-secondary);
-  text-decoration: none;
-  padding: 4px 0;
-  transition: color 120ms ease;
-}
-
-.footer-links-column a:hover {
-  color: var(--text-primary);
-}
-
-.footer-built {
+.footer-pills {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--sp-2);
 }
 
 .footer-built-pill {
@@ -102,7 +72,7 @@
   align-self: flex-start;
   gap: 4px;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 10px;
   color: var(--teal-400);
   background: var(--teal-glow-xs);
   border: 0.5px solid var(--border-teal);
@@ -117,15 +87,66 @@
   color: var(--text-tertiary);
 }
 
+.footer-links {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sp-6);
+}
+
+.footer-links-column h4 {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin: 0 0 var(--sp-3);
+}
+
+.footer-links-column a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  text-decoration: none;
+  padding: 5px 0;
+  transition: color var(--dur-micro) var(--ease-out);
+}
+
+.footer-links-column a:hover {
+  color: var(--text-primary);
+}
+
+.footer-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--text-success);
+  align-self: flex-start;
+}
+
+.footer-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--success-400);
+  box-shadow: 0 0 6px var(--success-400);
+  flex-shrink: 0;
+}
+
 .footer-bottom {
   max-width: 1280px;
-  margin: 24px auto 0;
-  padding-top: 16px;
+  margin: var(--sp-6) auto 0;
+  padding-top: var(--sp-4);
   border-top: 0.5px solid var(--border-dim);
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 
 @media (min-width: 768px) {
@@ -135,47 +156,25 @@
   }
 }
 
-.footer-bottom-left {
+.footer-copy {
   font-family: var(--font-sans);
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--text-tertiary);
 }
 
-.footer-bottom-center {
+.footer-legal {
   display: flex;
-  gap: 16px;
+  gap: var(--sp-4);
 }
 
-.footer-bottom-center a {
+.footer-legal a {
   font-family: var(--font-sans);
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--text-tertiary);
   text-decoration: none;
-  transition: color 120ms ease;
+  transition: color var(--dur-micro) var(--ease-out);
 }
 
-.footer-bottom-center a:hover {
+.footer-legal a:hover {
   color: var(--text-primary);
-}
-
-.footer-bottom-right {
-  font-family: var(--font-sans);
-  font-size: 11px;
-  color: var(--success-300);
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.footer-status-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--success-400);
-}
-
-.footer-external-icon {
-  display: inline;
-  vertical-align: middle;
-  margin-left: 1px;
 }

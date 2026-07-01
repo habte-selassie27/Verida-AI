@@ -1,4 +1,5 @@
-import type { ReactNode } from 'react';
+import { type ReactNode } from 'react';
+import { motion } from 'framer-motion';
 import './Card.css';
 
 type CardVariant = 'default' | 'raised' | 'danger' | 'metric';
@@ -33,9 +34,17 @@ export function Card({
     .filter(Boolean)
     .join(' ');
 
+  const Tag = onClick ? motion.div : 'div';
+
   return (
-    <div className={classes} onClick={onClick} role={onClick ? 'button' : undefined} tabIndex={onClick ? 0 : undefined}>
+    <Tag
+      className={classes}
+      onClick={onClick}
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      whileHover={hoverable ? { y: -2, transition: { type: 'spring', stiffness: 300, damping: 20 } } : undefined}
+    >
       {children}
-    </div>
+    </Tag>
   );
 }

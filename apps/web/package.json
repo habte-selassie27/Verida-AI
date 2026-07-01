@@ -4,7 +4,10 @@
   "version": "0.1.0",
   "type": "module",
   "dependencies": {
+    "@aptos-labs/ts-sdk": "^5.0.0",
     "@aptos-labs/wallet-adapter-react": "^8.3.3",
+    "@phosphor-icons/react": "^2.1.10",
+    "framer-motion": "^12.42.2",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router-dom": "^7.15.1"

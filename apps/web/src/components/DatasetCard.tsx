@@ -1,4 +1,6 @@
 import { Link } from 'react-router-dom';
+import { motion } from 'framer-motion';
+import { ArrowSquareOut, DownloadSimple } from '@phosphor-icons/react';
 import type { Dataset } from '@verida/shared';
 import { AddressDisplay } from './ui/AddressDisplay';
 import { IntegrityBadge } from './ui/IntegrityBadge';
@@ -51,16 +53,6 @@ function getVerificationStatus(dataset: Dataset): 'verified' | 'tampered' | 'pen
   return undefined;
 }
 
-function DownloadIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-      <polyline points="7 10 12 15 17 10" />
-      <line x1="12" y1="15" x2="12" y2="3" />
-    </svg>
-  );
-}
-
 export function DatasetCard({ dataset, onClick }: DatasetCardProps) {
   const category = getDatasetCategory(dataset);
   const catInfo = CATEGORY_ICONS[category] ?? { bg: 'var(--bg-raised)', icon: 'DT', color: 'var(--text-tertiary)' };
@@ -103,7 +95,7 @@ export function DatasetCard({ dataset, onClick }: DatasetCardProps) {
           {ACCESS_LABELS[dataset.access_type] ?? dataset.access_type} &middot; {formatBytes(dataset.size_bytes)}
         </Badge>
         <span className="dc-access-count">
-          <DownloadIcon />
+          <DownloadSimple size={12} />
           0
         </span>
       </div>
@@ -119,7 +111,7 @@ export function DatasetCard({ dataset, onClick }: DatasetCardProps) {
           target="_blank"
           rel="noopener noreferrer"
         >
-          ↗ Aptos
+          <ArrowSquareOut size={12} /> Aptos
         </a>
       </div>
     </>
@@ -129,16 +121,28 @@ export function DatasetCard({ dataset, onClick }: DatasetCardProps) {
 
   if (onClick) {
     return (
-      <div className={className} onClick={onClick} role="button" tabIndex={0}>
+      <motion.div
+        className={className}
+        onClick={onClick}
+        role="button"
+        tabIndex={0}
+        whileHover={{ y: -3, transition: { type: 'spring', stiffness: 300, damping: 20 } }}
+        whileTap={{ scale: 0.99 }}
+      >
         {content}
-      </div>
+      </motion.div>
     );
   }
 
   return (
-    <Link to={`/datasets/${dataset.id}`} className={className}>
-      {content}
-    </Link>
+    <motion.div
+      whileHover={{ y: -3, transition: { type: 'spring', stiffness: 300, damping: 20 } }}
+      whileTap={{ scale: 0.99 }}
+    >
+      <Link to={`/datasets/${dataset.id}`} className={className}>
+        {content}
+      </Link>
+    </motion.div>
   );
 }
 
