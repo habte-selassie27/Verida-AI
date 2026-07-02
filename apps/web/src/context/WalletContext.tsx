@@ -46,21 +46,31 @@ function WalletContextInner({ children }: { children: ReactNode }) {
   }, [adapterConnected, wallets]);
 
   const connect = useCallback(async () => {
-    if (wallets.length === 0)
-      throw new Error('No Aptos wallet detected. Please install Petra.');
+    // Poll for wallets up to 2s — wallet extensions inject asynchronously
+    // and may not be available at the moment the user clicks "Connect".
+    let availableWallets = wallets;
+    if (availableWallets.length === 0) {
+      for (let i = 0; i < 20; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        if (wallets.length > 0) {
+          availableWallets = wallets;
+          break;
+        }
+      }
+    }
+    if (availableWallets.length === 0) {
+      throw new Error(
+        'No Aptos wallet detected. Please install Petra, Martian, or Pontem and reload the page.',
+      );
+    }
 
     const preferred = ['petra', 'martian', 'pontem'];
     const target =
-      preferred.find((name) =>
-        wallets.some((w) => w.name.toLowerCase().includes(name)),
-      ) ?? wallets[0]?.name;
+      preferred.find((name) => availableWallets.some((w) => w.name.toLowerCase().includes(name))) ??
+      availableWallets[0]?.name;
 
     const matchedWallet = target
-      ? wallets.find(
-          (w) =>
-            w.name.toLowerCase().includes(target) ||
-            w.name === target,
-        )
+      ? wallets.find((w) => w.name.toLowerCase().includes(target) || w.name === target)
       : null;
 
     if (!matchedWallet) throw new Error('No wallet found');
@@ -152,11 +162,10 @@ function WalletContextInner({ children }: { children: ReactNode }) {
         try {
           const deserializer = new Deserializer(bcsBytes);
           const anySig = AnySignature.deserialize(deserializer);
-          const rawSig = anySig.toUint8Array();
-          // After the SDK version transition, toUint8Array() should return raw
-          // bytes (64 for Ed25519). But if it still returns BCS bytes, the
-          // length will be >64 and we fall through to the error below.
-          if (rawSig.length === 64) {
+          // anySig.toUint8Array() returns the full BCS envelope (393 bytes).
+          // Use the inner signature object to get just the raw 64 bytes.
+          const rawSig = anySig.signature?.toUint8Array();
+          if (rawSig?.length === 64) {
             return Array.from(rawSig)
               .map((b) => b.toString(16).padStart(2, '0'))
               .join('');
