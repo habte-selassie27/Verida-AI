@@ -121,6 +121,12 @@ function WalletContextInner({ children }: { children: ReactNode }) {
       if (Array.isArray(value)) {
         return (value as number[]).map((b) => b.toString(16).padStart(2, '0')).join('');
       }
+      if (value && typeof value === 'object' && 'toUint8Array' in value) {
+        const bytes = (value as { toUint8Array: () => Uint8Array }).toUint8Array();
+        return Array.from(bytes)
+          .map((b) => b.toString(16).padStart(2, '0'))
+          .join('');
+      }
       return normalizeHexString(value);
     },
     [normalizeHexString],
