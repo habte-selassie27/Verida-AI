@@ -3,6 +3,9 @@
   "outputDirectory": "apps/web/dist",
   "framework": "vite",
   "installCommand": "npm install",
+  "env": {
+    "VITE_API_URL": "https://verida-api-5ruj.onrender.com"
+  },
   "rewrites": [
     {
       "source": "/((?!assets/).*)",
