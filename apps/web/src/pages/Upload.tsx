@@ -150,6 +150,7 @@ export default function Upload() {
   const [price, setPrice] = useState('');
   const [aptPriceUsd, setAptPriceUsd] = useState<number | null>(null);
   const [restoredFileName, setRestoredFileName] = useState<string | null>(null);
+  const [restoredFileSize, setRestoredFileSize] = useState<string | null>(null);
 
   const [uploading, setUploading] = useState(false);
   const [uploadPercent, setUploadPercent] = useState(0);
@@ -192,6 +193,7 @@ export default function Upload() {
       if (draft.price) setPrice(draft.price);
       if (typeof draft.currentStep === 'number') setCurrentStep(draft.currentStep);
       if (draft.fileName) setRestoredFileName(draft.fileName);
+      if (draft.fileSize) setRestoredFileSize(draft.fileSize);
     } catch { /* ignore */ }
   }, []);
 
@@ -207,11 +209,12 @@ export default function Upload() {
         price,
         currentStep,
         fileName: file?.name ?? restoredFileName,
+        fileSize: file ? formatSize(file.size) : restoredFileSize,
       };
       try { localStorage.setItem(UPLOAD_DRAFT_KEY, JSON.stringify(draft)); } catch { /* ignore */ }
     }, 500);
     return () => clearTimeout(timer);
-  }, [name, description, tags, license, accessType, price, currentStep, file, restoredFileName]);
+  }, [name, description, tags, license, accessType, price, currentStep, file, restoredFileName, restoredFileSize]);
 
   useEffect(() => {
     if (!file) {
@@ -243,12 +246,12 @@ export default function Upload() {
     e.stopPropagation();
     setDragOver(false);
     const f = e.dataTransfer.files?.[0];
-    if (f) { setFile(f); setRestoredFileName(null); }
+    if (f) { setFile(f); setRestoredFileName(null); setRestoredFileSize(null); }
   }, []);
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
-    if (f) { setFile(f); setRestoredFileName(null); }
+    if (f) { setFile(f); setRestoredFileName(null); setRestoredFileSize(null); }
   }, []);
 
   const handleRemoveFile = useCallback(() => {
@@ -448,6 +451,7 @@ export default function Upload() {
   function clearDraft() {
     try { localStorage.removeItem(UPLOAD_DRAFT_KEY); } catch { /* ignore */ }
     setRestoredFileName(null);
+    setRestoredFileSize(null);
   }
 
   const handleCloseReceipt = useCallback(() => {
@@ -531,7 +535,8 @@ export default function Upload() {
                 {restoredFileName && (
                   <div className="restored-file-banner">
                     Previously selected: <strong>{restoredFileName}</strong>
-                    <span> — re-select the file to continue</span>
+                    {restoredFileSize && <span className="restored-file-size">{restoredFileSize}</span>}
+                    <span className="restored-file-hint"> — re-select the file to continue</span>
                   </div>
                 )}
                 <div

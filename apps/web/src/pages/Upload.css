@@ -146,6 +146,20 @@
   border-radius: var(--r-lg);
   color: var(--text-teal);
   font-size: 0.875rem;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.restored-file-size {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+}
+
+.restored-file-hint {
+  opacity: 0.7;
 }
 
 /* STEP 1 - DROP ZONE */
