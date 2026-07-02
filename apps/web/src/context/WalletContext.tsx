@@ -135,12 +135,14 @@ function WalletContextInner({ children }: { children: ReactNode }) {
   /**
    * Extract a raw 128-hex-char Ed25519 signature from a wallet response.
    *
-   * Handles three shapes returned by the Aptos wallet adapter:
+   * Handles four shapes returned by the Aptos wallet adapter:
    *   1. Already a 128-char hex string → return as-is.
-   *   2. A BCS-serialized AccountSignature / AnySignature (393 bytes = 786 hex
+   *   2. AnySignature object (has .signature with toUint8Array) → extract
+   *      the inner signature bytes directly.
+   *   3. A BCS-serialized AccountSignature / AnySignature (393 bytes = 786 hex
    *      chars) → deserialize with the Aptos SDK and extract the inner
    *      Ed25519 signature bytes.
-   *   3. A Uint8Array of exactly 64 bytes → convert to hex.
+   *   4. A Uint8Array of exactly 64 bytes → convert to hex.
    *
    * Returns lowercase hex (no 0x prefix) or throws.
    */
@@ -150,7 +152,20 @@ function WalletContextInner({ children }: { children: ReactNode }) {
       const hexStr = bytesToHex(sig);
       if (hexStr && hexStr.length === 128) return hexStr;
 
-      // ── Path 2: BCS-serialized signature (Uint8Array or long hex) ─────
+      // ── Path 2: AnySignature object — extract inner signature directly ─
+      if (sig && typeof sig === 'object' && 'signature' in sig) {
+        const inner = (sig as { signature: { toUint8Array?: () => Uint8Array } }).signature;
+        if (inner && typeof inner.toUint8Array === 'function') {
+          const rawBytes = inner.toUint8Array();
+          if (rawBytes.length === 64) {
+            return Array.from(rawBytes)
+              .map((b) => b.toString(16).padStart(2, '0'))
+              .join('');
+          }
+        }
+      }
+
+      // ── Path 3: BCS-serialized signature (Uint8Array or long hex) ─────
       let bcsBytes: Uint8Array | null = null;
 
       if (sig instanceof Uint8Array && sig.length > 64) {
@@ -181,7 +196,7 @@ function WalletContextInner({ children }: { children: ReactNode }) {
         }
       }
 
-      // ── Path 3: plain Uint8Array that is exactly 64 bytes (raw Ed25519) ──
+      // ── Path 4: plain Uint8Array that is exactly 64 bytes (raw Ed25519) ──
       if (sig instanceof Uint8Array && sig.length === 64) {
         return Array.from(sig)
           .map((b) => b.toString(16).padStart(2, '0'))
