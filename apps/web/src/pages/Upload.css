@@ -137,6 +137,17 @@
   justify-content: space-between;
 }
 
+/* Restored file banner */
+.restored-file-banner {
+  padding: 10px 16px;
+  margin-bottom: 12px;
+  background: var(--teal-glow-xs);
+  border: 1px solid var(--teal-500);
+  border-radius: var(--r-lg);
+  color: var(--text-teal);
+  font-size: 0.875rem;
+}
+
 /* STEP 1 - DROP ZONE */
 .drop-zone {
   height: 240px;
