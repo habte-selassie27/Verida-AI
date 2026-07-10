@@ -34,17 +34,19 @@ export function Card({
     .filter(Boolean)
     .join(' ');
 
-  const Tag = onClick ? motion.div : 'div';
+  if (onClick) {
+    return (
+      <motion.div
+        className={classes}
+        onClick={onClick}
+        role="button"
+        tabIndex={0}
+        whileHover={hoverable ? { y: -2, transition: { type: 'spring', stiffness: 300, damping: 20 } } : undefined}
+      >
+        {children}
+      </motion.div>
+    );
+  }
 
-  return (
-    <Tag
-      className={classes}
-      onClick={onClick}
-      role={onClick ? 'button' : undefined}
-      tabIndex={onClick ? 0 : undefined}
-      whileHover={hoverable ? { y: -2, transition: { type: 'spring', stiffness: 300, damping: 20 } } : undefined}
-    >
-      {children}
-    </Tag>
-  );
+  return <div className={classes}>{children}</div>;
 }

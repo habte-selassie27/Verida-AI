@@ -133,10 +133,9 @@ app.get('/api/price/apt', asyncHandler(async (_request: Request, response: Respo
   const cmcKey = process.env.CMC_API_KEY?.trim();
 
   if (!cmcKey) {
-    response.status(500).json({
-      error: { code: 'MISSING_CMC_API_KEY', error: 'CMC_API_KEY is not configured.' },
-      success: false,
-    });
+    // No API key configured — degrade gracefully instead of 500-ing every poll.
+    // The web client treats a missing/non-numeric price as "unavailable".
+    response.json({ data: { price: null, currency: 'USD', source: 'unavailable' }, success: true });
     return;
   }
 
@@ -163,16 +162,13 @@ app.get('/api/price/apt', asyncHandler(async (_request: Request, response: Respo
   } catch (cause: unknown) {
     console.error('[Price] CoinMarketCap fetch failed:', cause);
 
-    // Return cached price if available, otherwise fail
+    // Return cached price if available, otherwise degrade gracefully.
     if (aptPriceCache) {
       response.json({ data: { price: aptPriceCache.price, currency: 'USD', source: 'cache' }, success: true });
       return;
     }
 
-    response.status(502).json({
-      error: { code: 'PRICE_FETCH_FAILED', error: 'Unable to fetch APT price from CoinMarketCap.' },
-      success: false,
-    });
+    response.json({ data: { price: null, currency: 'USD', source: 'unavailable' }, success: true });
   }
 }));
 

@@ -7,6 +7,7 @@
 
 import { randomUUID } from 'node:crypto';
 
+import { Ed25519PublicKey, Ed25519Signature } from '@aptos-labs/ts-sdk';
 import { Router, type Request, type Response } from 'express';
 import asyncHandler from 'express-async-handler';
 import jwt from 'jsonwebtoken';
@@ -81,6 +82,10 @@ function buildSignMessage(nonce: string, address: string): string {
   ].join('\n');
 }
 
+function hexToBytes(hex: string): Uint8Array {
+  return new Uint8Array(hex.match(/.{1,2}/g)!.map((b) => Number.parseInt(b, 16)));
+}
+
 function extractNonceFromMessage(message: string): string | null {
   const nonceLine = message.split('\n').find((line) => line.startsWith('Nonce: '));
   return nonceLine?.slice('Nonce: '.length)?.trim() ?? null;
@@ -92,16 +97,19 @@ async function verifyAptosSignature(
   signature: string,
 ): Promise<boolean> {
   try {
-    // Aptos wallet signatures are hex-encoded Ed25519 signatures (128 hex chars = 64 bytes)
+    // Client sends '0x' + 32-byte Ed25519 public key + 64-byte Ed25519 signature.
     const cleanSig = signature.startsWith('0x') ? signature.slice(2) : signature;
 
-    // Validate signature format: should be 64 bytes (128 hex chars)
-    if (cleanSig.length !== 128 || !/^[0-9a-fA-F]+$/.test(cleanSig)) {
-      console.error('[Auth] Invalid signature format');
+    // Validate signature format: 96 bytes total = 192 hex chars.
+    if (cleanSig.length !== 192 || !/^[0-9a-fA-F]+$/.test(cleanSig)) {
+      console.error('[Auth] Invalid signature format, got length:', cleanSig.length);
       return false;
     }
 
-    // Verify the account exists on-chain and the signature's public key matches
+    const pubKeyHex = cleanSig.slice(0, 64);
+    const sigHex    = cleanSig.slice(64, 192);
+
+    // ── 1. Verify the public key matches the on-chain account ─────────────
     const response = await fetch(
       `https://fullnode.testnet.aptoslabs.com/v1/accounts/${address}`,
     );
@@ -110,21 +118,10 @@ async function verifyAptosSignature(
       return false;
     }
 
-    const account = await response.json() as { authentication_key: string };
-    const expectedAuthKey = account.authentication_key.toLowerCase().replace('0x', '');
+    const onChain = await response.json() as { authentication_key: string };
+    const expectedAuthKey = onChain.authentication_key.toLowerCase().replace('0x', '');
 
-    // Extract the 32-byte Ed25519 public key from the first 32 bytes of the signature
-    const pubKeyHex = cleanSig.slice(0, 64);
-    if (!/^[0-9a-fA-F]{64}$/.test(pubKeyHex)) {
-      console.error('[Auth] Invalid public key in signature');
-      return false;
-    }
-
-    // Aptos derives the account address from SHA3-256(0x00 || public_key)
-    // Compute the authentication key: SHA3-256(0x00 || pubkey_bytes)
-    const pubKeyBytes = new Uint8Array(
-      pubKeyHex.match(/.{1,2}/g)!.map((byte) => Number.parseInt(byte, 16)),
-    );
+    const pubKeyBytes = hexToBytes(pubKeyHex);
     const authKeyInput = new Uint8Array(33);
     authKeyInput[0] = 0x00; // Ed25519 scheme byte
     authKeyInput.set(pubKeyBytes, 1);
@@ -133,6 +130,21 @@ async function verifyAptosSignature(
 
     if (computedAuthKey !== expectedAuthKey) {
       console.error('[Auth] Derived auth key does not match on-chain auth key');
+      return false;
+    }
+
+    // ── 2. Actually verify the Ed25519 signature cryptographically ────────
+    // message is the fullMessage that was signed (format: "APTOS\n\nmessage: ...\nnonce: ...")
+    const aptosPubKey = new Ed25519PublicKey(pubKeyHex);
+    const aptosSig = new Ed25519Signature(sigHex);
+
+    const isValid = aptosPubKey.verifySignature({
+      message,
+      signature: aptosSig,
+    });
+
+    if (!isValid) {
+      console.error('[Auth] Ed25519 signature verification failed');
       return false;
     }
 

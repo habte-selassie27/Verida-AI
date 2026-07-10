@@ -209,25 +209,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!nonceBody.success) throw new Error('Failed to get auth nonce');
 
       // Step 2: Sign message with wallet
-      const { message } = nonceBody.data;
+      const { message: promptMessage } = nonceBody.data;
 
       // Sign via wallet adapter
-      const signature = await signMessage(message);
+      const { token: signatureToken, fullMessage: signedMessage } = await signMessage(promptMessage);
 
       // Diagnostics — log a safe preview of what we are about to send.
       // We never log full signatures; only type, char length, and hex-character prefix.
-      const sigLooksHex = typeof signature === 'string'
-        && /^[0-9a-f]+$/i.test(signature.replace(/^0x/, ''));
+      const sigLooksHex = typeof signatureToken === 'string'
+        && /^[0-9a-f]+$/i.test(signatureToken.replace(/^0x/, ''));
       console.debug('[Auth] Obtained wallet signature', {
-        signatureType: typeof signature,
-        signatureLength: typeof signature === 'string' ? signature.length : -1,
-        signatureStrippedLength: typeof signature === 'string'
-          ? signature.replace(/^0x/, '').length
+        signatureType: typeof signatureToken,
+        signatureLength: typeof signatureToken === 'string' ? signatureToken.length : -1,
+        signatureStrippedLength: typeof signatureToken === 'string'
+          ? signatureToken.replace(/^0x/, '').length
           : -1,
-        signaturePrefixSafe: typeof signature === 'string'
-          ? `${signature.slice(0, 12)}…`
+        signaturePrefixSafe: typeof signatureToken === 'string'
+          ? `${signatureToken.slice(0, 12)}…`
           : '<n/a>',
         signatureLooksHex: sigLooksHex,
+        fullMessagePrefix: signedMessage.slice(0, 60),
       });
 
       // Step 3: Verify signature and get JWT
@@ -236,12 +237,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // is the last line of defense BEFORE JSON.stringify — which would
       // serialize a Uint8Array as `{"0":1,"1":2,…}` and cause the server to
       // reject it as "Expected string, received object".
-      const safeSignature = coerceSignature(signature);
+      const safeSignature = coerceSignature(signatureToken);
       const signatureShape = inspectSignature(safeSignature);
 
       const verifyBody_payload = {
         address,
-        message,
+        message: signedMessage,
         signature: safeSignature,
       };
 
@@ -250,7 +251,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const captureStack = new Error('[Auth] pre-/verify send').stack ?? '<stack unavailable>';
       console.debug('[Auth] Sending /api/auth/verify', {
         address,
-        messageLength: message.length,
+        messageLength: signedMessage.length,
         signatureShape,
         sendStack: captureStack.split('\n').slice(0, 5).join('\n'),
       });
@@ -277,8 +278,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           serverError: verifyBody.error,
           sent: {
             address,
-            messageLength: message.length,
-            messagePreview: `${message.slice(0, 80)}${message.length > 80 ? '…' : ''}`,
+            messageLength: signedMessage.length,
+            messagePreview: `${signedMessage.slice(0, 80)}${signedMessage.length > 80 ? '…' : ''}`,
             signatureShape: inspectSignature(safeSignature),
           },
           serverErrorIssues:
