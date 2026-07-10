@@ -325,7 +325,7 @@ function WalletContextInner({ children }: { children: ReactNode }) {
               ? candidate
               : typeof candidate === 'string'
                 ? (() => {
-                    const h = bytesToHex(candidate);
+                    const h = normalizeHexString(candidate);
                     if (h && h.length > 128) {
                       try {
                         return new Uint8Array(h.match(/.{1,2}/g)!.map((b) => parseInt(b, 16)));
@@ -428,7 +428,7 @@ function WalletContextInner({ children }: { children: ReactNode }) {
       const authPubKey =
         typeof result.signature === 'string'
           ? (() => {
-              const h = bytesToHex(result.signature);
+              const h = normalizeHexString(result.signature);
               if (h && h.length > 128) {
                 try {
                   const bytes = new Uint8Array(h.match(/.{1,2}/g)!.map((b) => parseInt(b, 16)));
@@ -487,7 +487,7 @@ function WalletContextInner({ children }: { children: ReactNode }) {
       account,
       address,
       wallets,
-      bytesToHex,
+      normalizeHexString,
       extractEd25519Signature,
       extractEd25519PublicKey,
     ],
