@@ -55,8 +55,8 @@ const nonceRequestSchema = z.object({
 
 const verifyRequestSchema = z.object({
   address: z.string().trim().regex(/^0x[a-fA-F0-9]{4,}$/, 'Invalid Aptos address format.'),
-  message: z.string().trim().min(1, 'Message is required.'),
-  signature: z.string().trim().min(1, 'Signature is required.'),
+  message: z.string().min(1, 'Message is required.'),
+  signature: z.string().min(1, 'Signature is required.'),
 });
 
 // Test-only export. Re-using this directly skips nonce replay protection,
@@ -100,6 +100,21 @@ async function verifyAptosSignature(
     // Client sends '0x' + 32-byte Ed25519 public key + 64-byte Ed25519 signature.
     const cleanSig = signature.startsWith('0x') ? signature.slice(2) : signature;
 
+    // ── Diagnostic: log message shape (NEVER log full signature bytes) ─────
+    const msgPreview = message.length > 120
+      ? `${message.slice(0, 60)}...${message.slice(-60)}`
+      : message;
+    console.log('[Auth] verifyAptosSignature diagnostics:', {
+      address,
+      messageLength: message.length,
+      messagePreview: msgPreview,
+      messageStartsWithAPTOS: message.startsWith('APTOS'),
+      messageFirstLine: message.split('\n')[0],
+      sigHexLength: cleanSig.length,
+      hasTrailingWhitespace: message !== message.trimEnd(),
+      trailingChar: message.length > 0 ? message.charCodeAt(message.length - 1) : -1,
+    });
+
     // Validate signature format: 96 bytes total = 192 hex chars.
     if (cleanSig.length !== 192 || !/^[0-9a-fA-F]+$/.test(cleanSig)) {
       console.error('[Auth] Invalid signature format, got length:', cleanSig.length);
@@ -114,7 +129,7 @@ async function verifyAptosSignature(
       `https://fullnode.testnet.aptoslabs.com/v1/accounts/${address}`,
     );
     if (!response.ok) {
-      console.error('[Auth] Account not found on-chain');
+      console.error('[Auth] Account not found on-chain, status:', response.status);
       return false;
     }
 
@@ -122,11 +137,21 @@ async function verifyAptosSignature(
     const expectedAuthKey = onChain.authentication_key.toLowerCase().replace('0x', '');
 
     const pubKeyBytes = hexToBytes(pubKeyHex);
+    // Aptos Ed25519 legacy auth key = sha3_256(pubkey_bytes || 0x00).
+    // The single-signer Ed25519 scheme byte (0x00) is APPENDED at the end,
+    // not prepended.
     const authKeyInput = new Uint8Array(33);
-    authKeyInput[0] = 0x00; // Ed25519 scheme byte
-    authKeyInput.set(pubKeyBytes, 1);
+    authKeyInput.set(pubKeyBytes, 0); // 32-byte public key first
+    authKeyInput[32] = 0x00;          // Ed25519 scheme byte at the end
 
     const computedAuthKey = sha3_256(authKeyInput);
+
+    console.log('[Auth] Auth key check:', {
+      pubKeyHex: `${pubKeyHex.slice(0, 8)}...${pubKeyHex.slice(-8)}`,
+      computedAuthKey: `${computedAuthKey.slice(0, 8)}...${computedAuthKey.slice(-8)}`,
+      expectedAuthKey: `${expectedAuthKey.slice(0, 8)}...${expectedAuthKey.slice(-8)}`,
+      match: computedAuthKey === expectedAuthKey,
+    });
 
     if (computedAuthKey !== expectedAuthKey) {
       console.error('[Auth] Derived auth key does not match on-chain auth key');
@@ -144,13 +169,19 @@ async function verifyAptosSignature(
     });
 
     if (!isValid) {
-      console.error('[Auth] Ed25519 signature verification failed');
+      console.error('[Auth] Ed25519 signature verification FAILED');
+      console.error('[Auth] Message bytes for verification (hex preview):', {
+        length: message.length,
+        first100Chars: message.slice(0, 100),
+        last100Chars: message.slice(-100),
+      });
       return false;
     }
 
+    console.log('[Auth] Signature verification PASSED');
     return true;
   } catch (error) {
-    console.error('[Auth] Aptos signature verification failed:', error);
+    console.error('[Auth] Aptos signature verification threw:', error);
     return false;
   }
 }

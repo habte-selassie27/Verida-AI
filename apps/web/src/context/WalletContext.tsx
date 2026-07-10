@@ -162,12 +162,24 @@ function WalletContextInner({ children }: { children: ReactNode }) {
       if (!value || typeof value !== 'object') {
         // Hex string
         const maybeHex = normalizeHexString(value);
-        if (maybeHex && maybeHex.length === n * 2) {
-          const bytes = new Uint8Array(maybeHex.length / 2);
-          for (let i = 0; i < maybeHex.length; i += 2) {
-            bytes[i / 2] = Number.parseInt(maybeHex.slice(i, i + 2), 16);
+        if (maybeHex) {
+          if (maybeHex.length === n * 2) {
+            const bytes = new Uint8Array(maybeHex.length / 2);
+            for (let i = 0; i < maybeHex.length; i += 2) {
+              bytes[i / 2] = Number.parseInt(maybeHex.slice(i, i + 2), 16);
+            }
+            return bytes;
           }
-          return bytes;
+          // AnyPublicKey is serialized as scheme(1) + key(32) = 66 hex chars.
+          // Take the TRAILING n*2 hex chars so we drop the leading scheme byte.
+          if (maybeHex.length > n * 2 && maybeHex.length % 2 === 0) {
+            const trimmed = maybeHex.slice(maybeHex.length - n * 2);
+            const bytes = new Uint8Array(n);
+            for (let i = 0; i < trimmed.length; i += 2) {
+              bytes[i / 2] = Number.parseInt(trimmed.slice(i, i + 2), 16);
+            }
+            return bytes;
+          }
         }
         return null;
       }
@@ -286,15 +298,26 @@ function WalletContextInner({ children }: { children: ReactNode }) {
       // ─── Primary path: AIP-62 adapterSignMessage ──────────────────────
       if (adapterSignMessage) {
         try {
+          const walletNonce = Date.now().toString();
           const response = await adapterSignMessage({
             message,
-            nonce: Date.now().toString(),
+            nonce: walletNonce,
           });
 
           // AIP-62: response.fullMessage is what was actually signed
           // (format: "APTOS\n\nmessage: {message}\nnonce: {nonce}")
-          const signedMessage =
-            (response as { fullMessage?: string })?.fullMessage ?? message;
+          // CRITICAL: If fullMessage is missing, we must reconstruct it using
+          // the same nonce we sent to the wallet, NOT fall back to the raw
+          // message — Petra signs the AIP-62 wrapped message, not the raw prompt.
+          let signedMessage = (response as { fullMessage?: string })?.fullMessage;
+          if (!signedMessage) {
+            // Reconstruct AIP-62 format as a fallback
+            signedMessage = `APTOS\n\nmessage: ${message}\nnonce: ${walletNonce}`;
+            console.warn(
+              '[WalletContext] wallet adapter did not return fullMessage; reconstructed AIP-62 message.',
+              { reconstructedLength: signedMessage.length },
+            );
+          }
 
           const candidate =
             typeof response === 'string'
@@ -349,12 +372,48 @@ function WalletContextInner({ children }: { children: ReactNode }) {
       const accountObj = account as { publicKey?: unknown } | null;
       const pkViaAccount = accountObj?.publicKey;
       const pkViaAccountHex = extractEd25519PublicKey(pkViaAccount);
+
       const pubKeyHex =
-        authPubKey ??
+        // AUTHORITATIVE: the connected account's public key is definitionally
+        // correct for this address. Prefer it over anything parsed out of the
+        // signature blob — Petra's signMessage returns a RAW 64-byte signature
+        // (not an AccountAuthenticator), so deserializing it yields garbage.
+        pkViaAccountHex ??
         extractEd25519PublicKey(responseObj?.publicKey) ??
         extractEd25519PublicKey(responseObj?.public_key) ??
         extractEd25519PublicKey(responseObj?.accountPublicKey) ??
-        pkViaAccountHex;
+        authPubKey;
+
+      // ── Diagnostic: log the raw response and extracted keys ────────────
+      const hexify = (v: unknown): string => {
+        if (v == null) return String(v);
+        if (typeof v === 'string') return `str(${v.length}):${v.slice(0, 70)}`;
+        if (v instanceof Uint8Array) return `u8(${v.length}):${Array.from(v.slice(0, 40)).map((b) => b.toString(16).padStart(2, '0')).join('')}`;
+        if (typeof v === 'object') {
+          const keys = Object.keys(v as object);
+          const toU8 = (v as { toUint8Array?: () => Uint8Array }).toUint8Array;
+          let inner = '';
+          if (typeof toU8 === 'function') {
+            try { inner = hexify(toU8.call(v)); } catch { inner = 'toU8-threw'; }
+          }
+          return `obj{${keys.join(',')}}${inner ? ` toU8=${inner}` : ''}`;
+        }
+        return String(v);
+      };
+      console.log('[WalletContext] PUBKEY-DEBUG',
+        JSON.stringify({
+          responseKeys: response && typeof response === 'object' ? Object.keys(response) : 'N/A',
+          fullMessage60: signedMessage?.slice(0, 60),
+          sigHexLen: sigHex?.length ?? null,
+          authPubKey: authPubKey ?? null,
+          pkViaAccountHex: pkViaAccountHex ?? null,
+          finalPubKeyHex: pubKeyHex ?? null,
+          account_publicKey_shape: hexify(pkViaAccount),
+          response_publicKey_shape: hexify(responseObj?.publicKey),
+          response_public_key_shape: hexify(responseObj?.public_key),
+          address,
+        }, null, 2),
+      );
 
       if (pubKeyHex && pubKeyHex.length === 64 && sigHex && sigHex.length === 128) {
         return { token: `0x${pubKeyHex}${sigHex}`, fullMessage: signedMessage };
@@ -402,12 +461,14 @@ function WalletContextInner({ children }: { children: ReactNode }) {
       if (!adapterSignIn) throw new Error('Wallet does not support message signing');
 
       const walletName = wallets.find((w) => w.name.toLowerCase().includes('petra'))?.name;
+      const siwaNonce = Date.now().toString();
+      const siwaDomain = window.location.host;
 
       const result = await adapterSignIn({
         walletName: walletName ?? 'Petra',
         input: {
-          domain: window.location.host,
-          nonce: Date.now().toString(),
+          domain: siwaDomain,
+          nonce: siwaNonce,
           // exactOptionalPropertyTypes requires the field to be omitted (not
           // undefined) when no wallet address is available.
           ...(address !== null ? { address } : {}),
@@ -417,6 +478,21 @@ function WalletContextInner({ children }: { children: ReactNode }) {
       });
 
       if (!result?.signature) throw new Error('No signature returned from wallet');
+
+      // CRITICAL: The SIWA signIn method signs a DIFFERENT message format than
+      // the raw prompt. We must reconstruct the SIWA message so the backend
+      // verifies against the same bytes the wallet signed.
+      const siwaFullMessage = (result as { fullMessage?: string })?.fullMessage
+        ?? [
+          `${siwaDomain} wants you to sign in with your Aptos account:`,
+          address ?? '',
+          '',
+          `Nonce: ${siwaNonce}`,
+          '',
+          message,
+          '',
+          'Version: 1',
+        ].join('\n');
 
       const sigObj =
         typeof result.signature === 'string'
@@ -479,7 +555,7 @@ function WalletContextInner({ children }: { children: ReactNode }) {
         );
       }
 
-      return { token: `0x${pubKeyHex}${sigHex}`, fullMessage: message };
+      return { token: `0x${pubKeyHex}${sigHex}`, fullMessage: siwaFullMessage };
     },
     [
       adapterSignMessage,
