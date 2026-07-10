@@ -3,12 +3,8 @@ import { AptosWalletAdapterProvider, useWallet } from '@aptos-labs/wallet-adapte
 import type { InputTransactionData } from '@aptos-labs/wallet-adapter-react';
 import {
   AccountAuthenticator,
-  AnySignature,
   Deserializer,
-  Ed25519PublicKey,
-  Ed25519Signature,
   deserializeSignature,
-  type Signature,
 } from '@aptos-labs/ts-sdk';
 
 interface SignMessageResult {
@@ -109,13 +105,13 @@ function WalletContextInner({ children }: { children: ReactNode }) {
   );
 
   // ----- Signature normalizers ---------------------------------------------
-  // Petra's adapter returns signature data in several shapes across versions:
-  //   - adapterSignMessage(...) can return a hex string OR { signature: hex }
-  //   - adapterSignIn (SIWA) returns { ..., signature: { publicKey, signature } }
-  //     where values may be hex strings OR Uint8Array.
-  // The backend (/api/auth/verify) expects a single canonical form:
-  //   '0x' + 64-char Ed25519 publicKeyHex + 128-char Ed25519 signatureHex
-  // These helpers coerce any of those variants into clean lowercase hex.
+  // Petra's adapter returns signature data in several shapes across versions.
+  // The backend expects: '0x' + 64-char Ed25519 publicKeyHex + 128-char Ed25519 signatureHex.
+  //
+  // CRITICAL: The wallet adapter and the web app may use different copies of
+  // @aptos-labs/ts-sdk, so `instanceof` checks fail across packages. We use
+  // duck typing exclusively (checking for `.toUint8Array`, `.publicKey`,
+  // `.signature` properties) to traverse the object graph.
 
   const normalizeHexString = useCallback((value: unknown): string | null => {
     if (typeof value !== 'string') return null;
@@ -125,236 +121,127 @@ function WalletContextInner({ children }: { children: ReactNode }) {
     return hex;
   }, []);
 
-  /**
-   * Convert any of the wallet response shapes into lowercase hex (no 0x).
-   *
-   * Deliberately avoids `obj.toUint8Array()` because that method is
-   * deprecated in @aptos-labs/ts-sdk 5.x — Aptos SDK now wants callers to
-   * use `obj.bcsToBytes()` for BCS-envelope objects. We only touch
-   * `.toUint8Array()` on the still-current `Ed25519Signature` /
-   * `Ed25519PublicKey` types whose bytes ARE the signature/pubkey, never on
-   * `AccountAuthenticator` / `AnySignature` (which are envelopes).
-   */
-  const bytesToHex = useCallback(
-    (value: unknown): string | null => {
-      // Direct Uint8Array → hex.
-      if (value instanceof Uint8Array) {
-        return Array.from(value)
-          .map((b) => b.toString(16).padStart(2, '0'))
-          .join('');
-      }
-      // Plain arrays of bytes (defensive — e.g. JSON-serialized payloads
-      // arrive as `{ 0: 1, 1: 2 }` or `[{ }]`).
-      if (Array.isArray(value) && value.every((b) => typeof b === 'number')) {
-        return (value as number[]).map((b) => b.toString(16).padStart(2, '0')).join('');
-      }
-      // Object wrappers that expose the payload via a Uint8Array field
-      // (`bcs`, `bytes`, `data`, `hex`) — used by newer Aptos SDK envelopes
-      // without touching the deprecated `.toUint8Array()`.
-      if (value && typeof value === 'object') {
-        const obj = value as Record<string, unknown>;
-        if (obj.bcs instanceof Uint8Array) return bytesToHex(obj.bcs);
-        if (obj.bytes instanceof Uint8Array) return bytesToHex(obj.bytes);
-        if (obj.data instanceof Uint8Array) return bytesToHex(obj.data);
-        if (typeof obj.hex === 'string') return normalizeHexString(obj.hex);
-        if (obj.hex instanceof Uint8Array) return bytesToHex(obj.hex);
-      }
-      return normalizeHexString(value);
-    },
-    [normalizeHexString],
-  );
-
-  // Shared helpers used by both extractEd25519PublicKey and
-  // extractEd25519Signature.
   const toHex = (bytes: Uint8Array): string =>
     Array.from(bytes)
       .map((b) => b.toString(16).padStart(2, '0'))
       .join('');
 
-  const duckToUint8 = (v: unknown): Uint8Array | null => {
-    const fn = (v as Record<string, unknown> | null)?.toUint8Array;
+  /** Call `.toUint8Array()` on any object that has it, cross-package safe. */
+  const tryToUint8 = (v: unknown): Uint8Array | null => {
+    if (!v || typeof v !== 'object') return null;
+    const fn = (v as Record<string, unknown>).toUint8Array as unknown;
     if (typeof fn !== 'function') return null;
     const result = fn.call(v);
     return result instanceof Uint8Array ? result : null;
   };
 
   /**
-   * Pull out a 32-byte Ed25519 public key (64 hex chars) from any wallet
-   * payload shape. Returns `null` when undetermined.
-   */
-  const extractEd25519PublicKey = useCallback(
-    (value: unknown): string | null => {
-      // Fast path: direct 32-byte Uint8Array
-      if (value instanceof Uint8Array && value.length === 32) return toHex(value);
-      if (
-        Array.isArray(value) &&
-        value.length === 32 &&
-        value.every((b) => typeof b === 'number')
-      ) {
-        return toHex(new Uint8Array(value as number[]));
-      }
-
-      if (value && typeof value === 'object') {
-        if (value instanceof Ed25519PublicKey) return toHex(value.toUint8Array());
-        const obj = value as Record<string, unknown>;
-        // Check structured fields BEFORE duck-type toUint8Array — BCS
-        // envelopes (AnyPublicKey) have a .publicKey child that holds the
-        // raw key, whereas duckToUint8 on the envelope returns BCS-wrapped
-        // bytes that include the type tag.
-        if (obj.publicKey) return extractEd25519PublicKey(obj.publicKey);
-        if (obj.public_key) return extractEd25519PublicKey(obj.public_key);
-        if (obj.bcs instanceof Uint8Array) return extractEd25519PublicKey(obj.bcs);
-        if (obj.bytes instanceof Uint8Array) return extractEd25519PublicKey(obj.bytes);
-        if (obj.data instanceof Uint8Array) return extractEd25519PublicKey(obj.data);
-        if (typeof obj.hex === 'string') {
-          const h = bytesToHex(obj.hex);
-          if (h && h.length === 64) return h;
-        }
-        if (obj.hex instanceof Uint8Array) return extractEd25519PublicKey(obj.hex);
-      // Duck-type toUint8Array last — only safe for leaf types
-      // (Ed25519PublicKey) where toUint8Array returns exactly 32 raw bytes.
-      const duck = duckToUint8(value);
-      if (duck && duck.length === 32) return toHex(duck);
-      console.warn('[extractPubKey] failed on:', {
-        ctor: (value as object).constructor?.name,
-        keys: Object.keys(value as object).slice(0, 8),
-        duckLen: duck?.length,
-        hasPublicKey: 'publicKey' in (value as object),
-        hasPublic_key: 'public_key' in (value as object),
-        hasBcs: 'bcs' in (value as object),
-        hasBytes: 'bytes' in (value as object),
-        hasData: 'data' in (value as object),
-        hasHex: 'hex' in (value as object),
-      });
-      }
-
-      return bytesToHex(value);
-    },
-    [bytesToHex],
-  );
-
-  /**
-   * Pull a 64-byte Ed25519 signature (128 hex chars) out of any wallet
-   * payload shape. Returns `null` when undetermined.
+   * Get the raw N-byte payload from an object graph:
+   *   1. Try `.toUint8Array()` directly.
+   *   2. If result is longer than N, take the trailing N bytes (handles
+   *      BCS-envelope types like AnySignature / AnyPublicKey).
+   *   3. If object has a `.publicKey` / `.signature` child, recurse into it.
+   *   4. If object is a Uint8Array, use directly.
    *
-   * Order of preference (no deprecated API calls):
-   *   1. Raw 64-byte Uint8Array → hex.
-   *   2. Aptos SDK Ed25519Signature → `.toUint8Array()` (still supported
-   *      for the leaf type).
-   *   3. BCS envelope (Uint8Array > 64 bytes) → try
-   *      `deserializeSignature`, then `AnySignature.deserialize`, then take
-   *      `AnySignature.signature` and stringify.
-   *   4. 128-char hex string → as-is.
-   *   5. Last resort: trailing 64 bytes of an unknown envelope.
+   * Returns null when undetermined.
    */
-  const extractEd25519Signature = useCallback(
-    (value: unknown): string | null => {
-      const fromSignature = (s: Signature): string | null => {
-        // Duck-type first — handles cross-package instanceof mismatch.
-        const duck = duckToUint8(s);
-        if (duck && duck.length === 64) return toHex(duck);
-        // instanceof fallback for when the same SDK copy is used.
-        if (s instanceof Ed25519Signature) return toHex(s.toUint8Array());
-        if (s instanceof AnySignature) {
-          const inner = s.signature;
-          if (inner instanceof Ed25519Signature) return toHex(inner.toUint8Array());
-          return fromSignature(inner);
-        }
-        // Duck-type AnySignature via .signature traversal.
-        const sObj = s as unknown as Record<string, unknown>;
-        if (sObj.signature) return fromSignature(sObj.signature as Signature);
-        return null;
-      };
-
-      // (1) raw Uint8Array
+  const grabNbytes = useCallback(
+    (value: unknown, n: 32 | 64): Uint8Array | null => {
+      // Raw byte array
       if (value instanceof Uint8Array) {
-        if (value.length === 64) return toHex(value);
-        if (value.length === 65) {
-          // Some wallets prepend a 0x00 scheme byte before the 64-byte sig
-          return toHex(value.slice(1));
-        }
-        if (value.length > 64) {
-          // (3a) AccountAuthenticator envelope — Petra adapterSignMessage
-          // may return a BCS AccountAuthenticator, from which we need the
-          // inner 64-byte Ed25519 signature.
-          try {
-            const auth = AccountAuthenticator.deserialize(new Deserializer(value)) as unknown as
-              { signature: AnySignature };
-            const out = fromSignature(auth.signature);
-            if (out) return out;
-          } catch {
-            /* fall through */
-          }
-          try {
-            const parsed = deserializeSignature(value);
-            const out = fromSignature(parsed);
-            if (out) return out;
-          } catch {
-            /* fall through */
-          }
-          try {
-            const any = AnySignature.deserialize(new Deserializer(value));
-            const out = fromSignature(any);
-            if (out) return out;
-          } catch {
-            /* fall through — not an AnySignature, try trailing bytes */
-          }
-          // (5) trailing 64 bytes fallback.
-          if (value.length >= 64) return toHex(value.slice(value.length - 64));
-        }
+        if (value.length === n) return value;
+        if (value.length > n) return value.slice(value.length - n);
+        return null;
+      }
+      if (Array.isArray(value) && value.every((b) => typeof b === 'number')) {
+        if (value.length === n) return new Uint8Array(value as number[]);
+        if (value.length > n) return new Uint8Array((value as number[]).slice(value.length - n));
+        return null;
       }
 
-      // (2) long hex string → convert to bytes and retry deserializers.
-      const hex = bytesToHex(value);
-      if (typeof value === 'string' && hex && hex.length > 128) {
-        const bytes = new Uint8Array(
-          hex.match(/.{1,2}/g)!.map((b) => parseInt(b, 16)),
-        );
-        return extractEd25519Signature(bytes);
-      }
-
-      // (3) leaf typed signature
-      if (value instanceof Ed25519Signature) return toHex(value.toUint8Array());
-      if (value instanceof AnySignature) return fromSignature(value);
-
-      // (3b) generic object with signature / bcs / bytes / hex / toUint8Array
-      if (value && typeof value === 'object') {
-        const obj = value as Record<string, unknown>;
-        // Check .signature FIRST — AnySignature.toUint8Array() returns BCS
-        // bytes (not the 64-byte signature) in the current SDK, so we
-        // must traverse into the inner Ed25519Signature directly.
-        if (obj.signature) return extractEd25519Signature(obj.signature);
-        if (obj.bcs instanceof Uint8Array) return extractEd25519Signature(obj.bcs);
-        if (obj.bytes instanceof Uint8Array) return extractEd25519Signature(obj.bytes);
-        if (typeof obj.hex === 'string') {
-          const h = bytesToHex(obj.hex);
-          if (h && h.length === 128) return h;
+      if (!value || typeof value !== 'object') {
+        // Hex string
+        const maybeHex = normalizeHexString(value);
+        if (maybeHex && maybeHex.length === n * 2) {
+          const bytes = new Uint8Array(maybeHex.length / 2);
+          for (let i = 0; i < maybeHex.length; i += 2) {
+            bytes[i / 2] = Number.parseInt(maybeHex.slice(i, i + 2), 16);
+          }
+          return bytes;
         }
-        if (obj.hex instanceof Uint8Array) return extractEd25519Signature(obj.hex);
-        // Duck-type toUint8Array LAST — only for leaf types (Ed25519Signature)
-        // where toUint8Array returns raw bytes, not BCS.
-        const duck = duckToUint8(value);
-        if (duck && duck.length === 64) return toHex(duck);
-        if (duck && duck.length > 64) return extractEd25519Signature(duck);
+        return null;
       }
 
-      // (4) exact 128-char hex string
-      if (hex && hex.length === 128) return hex;
+      const obj = value as Record<string, unknown>;
 
-      // (5) brute-force toUint8Array fallback on any remaining object
-      if (value && typeof value === 'object') {
-        const duck = duckToUint8(value);
-        if (duck && duck.length === 64) return toHex(duck);
-        console.warn('[extractSig] failed on:', {
-          ctor: (value as object).constructor?.name,
-          keys: Object.keys(value as object).slice(0, 5),
-          duckLen: duck?.length,
-        });
+      // Traverse into child properties FIRST — wrapper types (AnyPublicKey,
+      // AnySignature) hold the raw key/sig in .publicKey / .signature.
+      // Only fall through to toUint8Array for leaf types (Ed25519PublicKey,
+      // Ed25519Signature) where it returns exactly N raw bytes.
+      if (obj.publicKey) return grabNbytes(obj.publicKey, n);
+      if (obj.public_key) return grabNbytes(obj.public_key, n);
+      if (n === 64 && obj.signature) return grabNbytes(obj.signature, 64);
+      for (const key of ['bcs', 'bytes', 'data'] as const) {
+        const val = obj[key];
+        if (val instanceof Uint8Array) return grabNbytes(val, n);
+      }
+      if (typeof obj.hex === 'string') return grabNbytes(obj.hex, n);
+      if (obj.hex instanceof Uint8Array) return grabNbytes(obj.hex, n);
+
+      // toUint8Array LAST — leaf types (Ed25519PublicKey / Ed25519Signature)
+      // return exactly N raw bytes. Envelope BCS bytes MUST have been
+      // handled by the child traversal above, so if toUint8 returns > N
+      // the payload is a BCS wrapper with an unrecognised child field,
+      // and we take trailing N bytes as a last resort.
+      const uint8 = tryToUint8(value);
+      if (uint8) {
+        if (uint8.length === n) return uint8;
+        if (uint8.length > n) return uint8.slice(uint8.length - n);
       }
 
       return null;
     },
-    [bytesToHex],
+    [normalizeHexString],
+  );
+
+  const extractEd25519PublicKey = useCallback(
+    (value: unknown): string | null => {
+      const bytes = grabNbytes(value, 32);
+      return bytes ? toHex(bytes) : null;
+    },
+    [],
+  );
+
+  const extractEd25519Signature = useCallback(
+    (value: unknown): string | null => {
+      // First try as generic 64-byte extraction
+      const bytes = grabNbytes(value, 64);
+      if (bytes) return toHex(bytes);
+
+      // Fallback: try to BCS-deserialize longer byte arrays (AccountAuthenticator)
+      if (value instanceof Uint8Array && value.length > 64) {
+        try {
+          const aa = AccountAuthenticator.deserialize(new Deserializer(value)) as unknown as
+            { signature: { signature?: unknown; toUint8Array?: () => Uint8Array } };
+          if (aa.signature) return extractEd25519Signature(aa.signature);
+        } catch { /* not an AccountAuthenticator */ }
+        try {
+          const parsed = deserializeSignature(value);
+          const bytes2 = grabNbytes(parsed, 64);
+          if (bytes2) return toHex(bytes2);
+        } catch { /* continue */ }
+      }
+
+      // Long hex string → convert to bytes
+      const hex = normalizeHexString(value);
+      if (hex && hex.length > 128) {
+        const buf = new Uint8Array(hex.match(/.{1,2}/g)!.map((b) => Number.parseInt(b, 16)));
+        return extractEd25519Signature(buf);
+      }
+
+      return null;
+    },
+    [normalizeHexString],
   );
 
   /**
