@@ -23,12 +23,26 @@ const LICENSE_OPTIONS = [
   'Custom',
 ];
 const UPLOAD_STAGES = [
-  'Hashing file content',
-  'Uploading to Shelby RPC',
-  'Clay erasure encoding',
-  'Distributing to 16 SP nodes',
+  'Hashing & encoding',
   'Anchoring to Aptos L1',
+  'Uploading to Shelby RPC',
+  'Distributing to 16 SP nodes',
+  'Complete',
 ];
+
+// WebSocket progress lives on the API server, not the Vite dev server.
+// Derive the WS origin from VITE_API_URL (e.g. http://localhost:4000 -> ws://localhost:4000).
+function getWsBase(): string {
+  const apiUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
+  try {
+    const url = new URL(apiUrl);
+    const protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${protocol}//${url.host}`;
+  } catch {
+    return `ws://${window.location.host}`;
+  }
+}
+const WS_BASE = getWsBase();
 
 async function computeSHA256(file: File): Promise<string> {
   const buffer = await file.arrayBuffer();
@@ -370,15 +384,14 @@ export default function Upload() {
         formData.append('pricePerAccess', String(Math.round(parseFloat(price) * 100_000_000)));
       }
 
-      setUploadStage(1);
-      setUploadPercent(5);
+      setUploadStage(0);
+      setUploadPercent(0);
 
       const result = await uploadDataset(formData);
       const jobId = result.jobId;
 
-      // Connect to WebSocket for real-time progress
-      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${wsProtocol}//${window.location.host}/ws/uploads/${jobId}`;
+      // Connect to WebSocket for real-time progress (API server, not Vite)
+      const wsUrl = `${WS_BASE}/ws/uploads/${jobId}`;
 
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
@@ -389,9 +402,10 @@ export default function Upload() {
           if (msg.type === 'progress') {
             const progress = msg.data;
             setUploadPercent(progress.percent);
-            if (progress.stage === 'reading') setUploadStage(1);
-            else if (progress.stage === 'registering') setUploadStage(2);
-            else if (progress.stage === 'confirming') setUploadStage(3);
+            if (progress.stage === 'reading') setUploadStage(0);
+            else if (progress.stage === 'encoding') setUploadStage(0);
+            else if (progress.stage === 'registering') setUploadStage(1);
+            else if (progress.stage === 'confirming') setUploadStage(2);
             else if (progress.stage === 'complete') setUploadStage(4);
           } else if (msg.type === 'complete') {
             setUploadStage(5);
@@ -421,22 +435,14 @@ export default function Upload() {
       };
 
       ws.onerror = () => {
-        // Fallback: show completion since the upload already succeeded via REST
-        setUploadStage(5);
-        setUploadPercent(100);
-        setChunksDone(16);
-        setTimeout(() => {
-          setUploading(false);
-          clearDraft();
-          setReceipt({
-            jobId,
-            blobId: result.dataset?.shelby_blob_id ?? 'Pending...',
-            merkleRoot: result.dataset?.merkle_root ?? 'Pending...',
-            txHash: result.dataset?.provenance_receipt?.txHash ?? 'Pending...',
-            uploadedAt: new Date().toLocaleString(),
-            chunks: 16,
-          });
-        }, 500);
+        // The REST call only QUEUES the job; the actual Shelby upload and DB
+        // insert happen asynchronously in the worker. A lost progress stream
+        // means we do NOT know the outcome, so do NOT claim success.
+        setUploadError(
+          'Lost connection to the upload progress stream. The upload may still be ' +
+            'processing — check your dashboard in a moment. If it does not appear, retry the upload.',
+        );
+        setUploading(false);
       };
 
       ws.onclose = () => {

@@ -57,7 +57,7 @@ export interface UploadProgressEvent {
   bytesTotal: number;
   bytesUploaded: number;
   percent: number;
-  stage: 'reading' | 'registering' | 'complete' | 'failed';
+  stage: 'reading' | 'encoding' | 'registering' | 'confirming' | 'complete' | 'failed';
 }
 
 export interface UploadCompleteEvent {

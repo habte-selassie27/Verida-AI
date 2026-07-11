@@ -5,7 +5,7 @@
 // DB TABLES: None directly; this file provides runtime utilities for Shelby-backed modules.
 // HANDOFF TO TESTER: Verify singleton initialization, env parsing, blob id helpers, and error typing work under mocked SDKs.
 
-import { Account, Aptos, AptosConfig, Ed25519Account, Ed25519PrivateKey, Network } from '@aptos-labs/ts-sdk';
+import { Account, AccountAddress, Aptos, AptosConfig, Ed25519Account, Ed25519PrivateKey, Network } from '@aptos-labs/ts-sdk';
 import { ShelbyNodeClient } from '@shelby-protocol/sdk/node';
 import type { AccessType, DatasetTag, ProvenanceReceipt } from '@verida/shared';
 
@@ -115,12 +115,14 @@ async function createUploadSigner(): Promise<Account> {
 
   if (privateKey !== undefined && privateKey.length > 0) {
     try {
-      const normalizedKey = privateKey.startsWith('ed25519-priv-')
-        ? privateKey.slice('ed25519-priv-'.length)
-        : privateKey;
+      // Pass the key in AIP-80 compliant form (ed25519-priv-0x…) to silence
+      // the SDK warning and ensure consistent parsing.
+      const aip80Key = privateKey.startsWith('ed25519-priv-')
+        ? privateKey
+        : `ed25519-priv-${privateKey.replace(/^0x/i, '')}`;
 
       return new Ed25519Account({
-        privateKey: new Ed25519PrivateKey(normalizedKey),
+        privateKey: new Ed25519PrivateKey(aip80Key),
       });
     } catch (cause: unknown) {
       throw new ShelbyConfigurationError('SHELBY_SIGNER_PRIVATE_KEY is invalid.', { cause });
@@ -191,8 +193,14 @@ async function initializeShelbyRuntime(): Promise<ShelbyRuntimeState> {
   const client = new ShelbyNodeClient({
     network: shelbyClientNetwork,
     apiKey,
+    deployer: AccountAddress.fromString('0x85fdb9a176ab8ef1d9d9c1b60d60b3924f0800ac1de1cc2085fb0b8bb4988e6a'),
   });
-  const aptos = new Aptos(new AptosConfig({ network }));
+  const aptos = new Aptos(
+    new AptosConfig({
+      network,
+      clientConfig: { API_KEY: apiKey },
+    }),
+  );
   const uploadSigner = await createUploadSigner();
 
   if (process.env.NODE_ENV !== 'test' && process.env.VITEST !== 'true') {

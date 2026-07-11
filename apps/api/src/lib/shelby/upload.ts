@@ -57,15 +57,25 @@ async function emitProgress(
   await onProgress(progress);
 }
 
+const MAX_BLOB_NAME_LENGTH = 64;
+
+function truncateToMax(str: string, max: number): string {
+  return str.length <= max ? str : str.slice(0, max);
+}
+
 async function resolveBlobName(filePath: string, metadata: ShelbyUploadMetadata): Promise<string> {
   if (isNonEmptyString(metadata.blobName)) {
-    return metadata.blobName.replaceAll('\\', '/').replace(/^\/+/, '');
+    return truncateToMax(metadata.blobName.replaceAll('\\', '/').replace(/^\/+/, ''), MAX_BLOB_NAME_LENGTH);
   }
 
   const normalizedContentHash = metadata.contentHash.trim().replace(/^0x/i, '').toLowerCase();
+  const hashPrefix = normalizedContentHash.slice(0, 12);
   const fileName = path.basename(filePath).replaceAll('\\', '/');
+  const baseName = fileName.replace(/\.[^.]+$/, '');
 
-  return path.posix.join('datasets', metadata.publisherAddress, normalizedContentHash, fileName);
+  const candidate = `${hashPrefix}-${baseName}`;
+
+  return truncateToMax(candidate, MAX_BLOB_NAME_LENGTH);
 }
 
 async function countChunkCommitments(blobCommitments: ShelbyBlobCommitmentsLike): Promise<number> {
@@ -199,6 +209,14 @@ export async function uploadDataset(
     const aptosClient = await getShelbyAptosClient();
     const provider = await ClayErasureCodingProvider.create();
     const blobCommitments = (await generateCommitments(provider, blobData)) as ShelbyBlobCommitmentsLike;
+
+    await emitProgress(options.onProgress, {
+      percent: 10,
+      bytesUploaded: 0,
+      bytesTotal: fileSizeBytes,
+      stage: 'encoding',
+    });
+
     const blobName = await resolveBlobName(filePath, metadata);
     const expirationMicros =
       metadata.expirationMicros ??
@@ -235,6 +253,13 @@ export async function uploadDataset(
         blobName,
         blobData,
       });
+    });
+
+    await emitProgress(options.onProgress, {
+      percent: 90,
+      bytesUploaded: fileSizeBytes,
+      bytesTotal: fileSizeBytes,
+      stage: 'confirming',
     });
 
     let expiresAtMicros = expirationMicros;
@@ -286,8 +311,9 @@ export async function uploadDataset(
       throw cause;
     }
 
-    throw new ShelbyUploadError(`Failed to upload ${filePath} to Shelby.`, { cause });
-  } finally {
-    await cleanupTempFile(filePath);
+    const causeMessage = cause instanceof Error ? cause.message : String(cause);
+    throw new ShelbyUploadError(`Failed to upload ${filePath} to Shelby: ${causeMessage}`, { cause });
   }
+  // NOTE: temp-file cleanup is owned by the caller (upload worker) so the file
+  // survives BullMQ job retries instead of being deleted after the first attempt.
 }

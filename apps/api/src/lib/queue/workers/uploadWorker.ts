@@ -112,10 +112,7 @@ function mapShelbyProgressToUploadProgress(progress: ShelbyUploadProgress): Uplo
     bytesTotal: progress.bytesTotal,
     bytesUploaded: progress.bytesUploaded,
     percent: progress.percent,
-    stage:
-      progress.stage === 'reading' || progress.stage === 'registering' || progress.stage === 'complete'
-        ? progress.stage
-        : 'registering',
+    stage: progress.stage,
   };
 }
 
@@ -214,9 +211,12 @@ async function handleUploadJobFailure(
   cause: unknown,
 ): Promise<never> {
   const errorMessage = cause instanceof Error ? cause.message : 'Upload job failed.';
+  const rootCause = cause instanceof Error && 'cause' in cause
+    ? (cause as { cause?: unknown }).cause
+    : undefined;
 
+  console.error('[Upload] Job failed:', { jobId, error: errorMessage, cause: rootCause });
   await emitUploadError(jobId, errorMessage);
-  await removeTempFile(filePath);
 
   if (cause instanceof Error) {
     throw cause;
@@ -250,6 +250,16 @@ export function createUploadWorker(): Worker<UploadDatasetJobData, UploadWorkerR
 
         await emitUploadComplete(jobId, dataset);
 
+        console.log('[Upload] Dataset persisted:', {
+          datasetId: dataset.id,
+          name: dataset.name,
+          blobId: uploadResult.blobId,
+          sizeBytes: uploadResult.receipt.size,
+        });
+
+        // Success: safe to remove the temp file now.
+        await removeTempFile(job.data.filePath);
+
         return {
           blobId: dataset.shelby_blob_id,
           dataset,
@@ -271,9 +281,13 @@ export function createUploadWorker(): Worker<UploadDatasetJobData, UploadWorkerR
           });
         }
 
+        // Keep the temp file for BullMQ retries; only delete on the final attempt.
+        const isLastAttempt = job.attemptsMade + 1 >= (job.opts.attempts ?? 1);
+        if (isLastAttempt) {
+          await removeTempFile(job.data.filePath);
+        }
+
         return await handleUploadJobFailure(jobId, job.data.filePath, cause);
-      } finally {
-        await removeTempFile(job.data.filePath);
       }
     },
     {
