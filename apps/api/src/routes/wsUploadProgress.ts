@@ -68,7 +68,13 @@ function ensureSubscribed(): void {
     broadcastToJob(event.jobId, {
       type: 'complete',
       jobId: event.jobId,
-      dataset: { id: event.dataset.id, name: event.dataset.name },
+      dataset: {
+        id: event.dataset.id,
+        name: event.dataset.name,
+        shelby_blob_id: event.dataset.shelby_blob_id,
+        merkle_root: event.dataset.merkle_root,
+        tx_hash: event.dataset.provenance_receipt?.txHash,
+      },
     });
     // Close all sockets for this job after a short delay
     setTimeout(() => {

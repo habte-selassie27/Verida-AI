@@ -371,6 +371,78 @@ export default function Upload() {
     setUploadDetailOpen(false);
     setUploadError(null);
 
+    // 1️⃣ Generate jobId client-side so WS channel exists before the POST
+    const jobId = crypto.randomUUID();
+
+    // 2️⃣ Open WebSocket FIRST — listen before the worker emits anything
+    const wsUrl = `${WS_BASE}/ws/uploads/${jobId}`;
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
+
+    // 3️⃣ Wait for WS to connect
+    try {
+      await new Promise<void>((resolve, reject) => {
+        if (ws.readyState === WebSocket.OPEN) { resolve(); return; }
+        const timeout = setTimeout(() => reject(new Error('WebSocket connection timeout')), 5000);
+        ws.onopen = () => { clearTimeout(timeout); resolve(); };
+        ws.onerror = () => { clearTimeout(timeout); reject(new Error('WebSocket failed')); };
+      });
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Failed to connect to progress stream');
+      setUploading(false);
+      return;
+    }
+
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'progress') {
+          const progress = msg.data;
+          setUploadPercent(progress.percent);
+          if (progress.stage === 'reading' || progress.stage === 'encoding') setUploadStage(0);
+          else if (progress.stage === 'registering') setUploadStage(1);
+          else if (progress.stage === 'confirming') setUploadStage(2);
+          else if (progress.stage === 'complete') setUploadStage(4);
+        } else if (msg.type === 'complete') {
+          setUploadStage(4);
+          setUploadPercent(100);
+          setChunksDone(16);
+          ws.close();
+          setTimeout(() => {
+            setUploading(false);
+            clearDraft();
+            setReceipt({
+              jobId,
+              blobId: msg.dataset?.shelby_blob_id ?? 'Pending...',
+              merkleRoot: msg.dataset?.merkle_root ?? 'Pending...',
+              txHash: msg.dataset?.tx_hash ?? 'Pending...',
+              uploadedAt: new Date().toLocaleString(),
+              chunks: 16,
+            });
+          }, 500);
+        } else if (msg.type === 'error') {
+          setUploadError(msg.error || 'Upload failed');
+          ws.close();
+          setUploading(false);
+        }
+      } catch {
+        // Ignore parse errors
+      }
+    };
+
+    ws.onerror = () => {
+      setUploadError(
+        'Lost connection to the upload progress stream. The upload may still be ' +
+          'processing — check your dashboard in a moment.',
+      );
+      setUploading(false);
+    };
+
+    ws.onclose = () => {
+      wsRef.current = null;
+    };
+
+    // 4️⃣ Now POST with the pre-generated jobId
     try {
       const formData = new FormData();
       formData.append('file', file);
@@ -379,78 +451,17 @@ export default function Upload() {
       formData.append('license', license);
       formData.append('accessType', accessType);
       formData.append('publisherAddress', address);
+      formData.append('jobId', jobId);
       tags.forEach((t) => formData.append('tags', t));
       if (accessType !== AccessType.FREE && price) {
         formData.append('pricePerAccess', String(Math.round(parseFloat(price) * 100_000_000)));
       }
 
-      setUploadStage(0);
-      setUploadPercent(0);
-
-      const result = await uploadDataset(formData);
-      const jobId = result.jobId;
-
-      // Connect to WebSocket for real-time progress (API server, not Vite)
-      const wsUrl = `${WS_BASE}/ws/uploads/${jobId}`;
-
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
-
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          if (msg.type === 'progress') {
-            const progress = msg.data;
-            setUploadPercent(progress.percent);
-            if (progress.stage === 'reading') setUploadStage(0);
-            else if (progress.stage === 'encoding') setUploadStage(0);
-            else if (progress.stage === 'registering') setUploadStage(1);
-            else if (progress.stage === 'confirming') setUploadStage(2);
-            else if (progress.stage === 'complete') setUploadStage(4);
-          } else if (msg.type === 'complete') {
-            setUploadStage(5);
-            setUploadPercent(100);
-            setChunksDone(16);
-            ws.close();
-            setTimeout(() => {
-              setUploading(false);
-              clearDraft();
-              setReceipt({
-                jobId,
-                blobId: result.dataset?.shelby_blob_id ?? 'Pending...',
-                merkleRoot: result.dataset?.merkle_root ?? 'Pending...',
-                txHash: result.dataset?.provenance_receipt?.txHash ?? 'Pending...',
-                uploadedAt: new Date().toLocaleString(),
-                chunks: 16,
-              });
-            }, 500);
-          } else if (msg.type === 'error') {
-            setUploadError(msg.error || 'Upload failed');
-            ws.close();
-            setUploading(false);
-          }
-        } catch {
-          // Ignore parse errors
-        }
-      };
-
-      ws.onerror = () => {
-        // The REST call only QUEUES the job; the actual Shelby upload and DB
-        // insert happen asynchronously in the worker. A lost progress stream
-        // means we do NOT know the outcome, so do NOT claim success.
-        setUploadError(
-          'Lost connection to the upload progress stream. The upload may still be ' +
-            'processing — check your dashboard in a moment. If it does not appear, retry the upload.',
-        );
-        setUploading(false);
-      };
-
-      ws.onclose = () => {
-        wsRef.current = null;
-      };
+      await uploadDataset(formData);
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : 'Upload failed');
       setUploading(false);
+      ws.close();
     }
   }, [file, address, name, description, license, accessType, price, tags]);
 

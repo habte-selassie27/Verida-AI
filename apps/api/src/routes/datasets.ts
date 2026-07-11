@@ -626,9 +626,14 @@ datasetsRouter.post(
       publisherAddress: authenticatedAddress,
     };
 
+    const clientJobId = typeof req.body.jobId === 'string' && req.body.jobId.length > 0
+      ? req.body.jobId
+      : undefined;
+
     const job = await UploadDatasetQueue.add(UploadJobTypes.UPLOAD_DATASET, jobData, {
       attempts: 3,
       backoff: { delay: 5000, type: 'exponential' },
+      jobId: clientJobId,
       removeOnComplete: { age: 86400, count: 100 },
       removeOnFail: { age: 604800 },
     });
