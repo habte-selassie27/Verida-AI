@@ -24,6 +24,11 @@ import { isShelbyAvailable } from './lib/shelby/client.js';
 import { closeUploadQueue } from './lib/queue/queue.js';
 import { closeUploadWorker, UploadWorker } from './lib/queue/workers/uploadWorker.js';
 import { closeVerifyWorker, VerifyWorker } from './lib/queue/workers/verifyWorker.js';
+import { closeDescribeWorker, describeWorker } from './ai/workers/describeWorker.js';
+import { closeEmbedWorker, embedWorker } from './ai/workers/embedWorker.js';
+import { closeQualityWorker, qualityWorker } from './ai/workers/qualityWorker.js';
+import { closeAiQueues } from './ai/queue.js';
+import { closeAiRedis } from './ai/serving/cache.js';
 import { closeRateLimitRedisClient, generalRateLimit } from './middleware/rateLimit.js';
 import { accessRouter } from './routes/access.js';
 import { authRouter } from './routes/auth.js';
@@ -35,6 +40,9 @@ const app = express();
 
 void UploadWorker;
 void VerifyWorker;
+void describeWorker;
+void embedWorker;
+void qualityWorker;
 
 function getServerPort(): number {
   const parsed = Number.parseInt(process.env.PORT ?? '4000', 10);
@@ -48,7 +56,10 @@ function isProductionEnvironment(): boolean {
 app.set('trust proxy', 1);
 
 app.use(helmet());
-app.use(cors());
+app.use(cors({
+  exposedHeaders: ['Content-Type'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
 app.use(morgan(isProductionEnvironment() ? 'combined' : 'dev'));
 app.use(express.json({
   limit: '2mb',
@@ -120,7 +131,7 @@ app.get('/api/stats/live', asyncHandler(async (_request: Request, response: Resp
 
 app.use('/api', generalRateLimit);
 
-// Live APT price from CoinMarketCap (cached for 60s)
+// Live APT price (cached for 60s)
 let aptPriceCache: { price: number; fetchedAt: number } | null = null;
 const APT_PRICE_CACHE_MS = 60_000;
 
@@ -130,46 +141,88 @@ app.get('/api/price/apt', asyncHandler(async (_request: Request, response: Respo
     return;
   }
 
-  const cmcKey = process.env.CMC_API_KEY?.trim();
+  // 1. Binance — largest exchange, free, no key, very reliable
+  const fetchFromBinance = async (): Promise<number | null> => {
+    try {
+      const res = await fetch(
+        'https://api.binance.com/api/v3/ticker/price?symbol=APTUSDT',
+        { signal: AbortSignal.timeout(5000) },
+      );
+      if (!res.ok) throw new Error(`Binance responded ${res.status}`);
+      const data = await res.json() as { price?: string };
+      const price = parseFloat(data.price ?? '');
+      if (!isFinite(price) || price <= 0) throw new Error('Invalid price from Binance');
+      return price;
+    } catch (cause: unknown) {
+      console.error('[Price] Binance fetch failed:', cause);
+      return null;
+    }
+  };
 
-  if (!cmcKey) {
-    // No API key configured — degrade gracefully instead of 500-ing every poll.
-    // The web client treats a missing/non-numeric price as "unavailable".
-    response.json({ data: { price: null, currency: 'USD', source: 'unavailable' }, success: true });
-    return;
+  // 2. Coinbase — reliable US exchange, free, no key
+  const fetchFromCoinbase = async (): Promise<number | null> => {
+    try {
+      const res = await fetch(
+        'https://api.coinbase.com/v2/prices/APT-USD/spot',
+        { signal: AbortSignal.timeout(5000) },
+      );
+      if (!res.ok) throw new Error(`Coinbase responded ${res.status}`);
+      const data = await res.json() as { data?: { amount?: string } };
+      const price = parseFloat(data.data?.amount ?? '');
+      if (!isFinite(price) || price <= 0) throw new Error('Invalid price from Coinbase');
+      return price;
+    } catch (cause: unknown) {
+      console.error('[Price] Coinbase fetch failed:', cause);
+      return null;
+    }
+  };
+
+  // 3. CoinGecko — free fallback
+  const fetchFromCoinGecko = async (): Promise<number | null> => {
+    try {
+      const cgKey = process.env.COINGECKO_API_KEY?.trim();
+      const url = cgKey
+        ? `https://pro-api.coingecko.com/api/v3/simple/price?ids=aptos&vs_currencies=usd&x_cg_pro_api_key=${cgKey}`
+        : 'https://api.coingecko.com/api/v3/simple/price?ids=aptos&vs_currencies=usd';
+      const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+      if (!res.ok) throw new Error(`CoinGecko responded ${res.status}`);
+      const data = await res.json() as { aptos?: { usd?: number } };
+      const price = data.aptos?.usd;
+      if (typeof price !== 'number' || price <= 0) throw new Error('Invalid price from CoinGecko');
+      return price;
+    } catch (cause: unknown) {
+      console.error('[Price] CoinGecko fetch failed:', cause);
+      return null;
+    }
+  };
+
+  let price: number | null = null;
+  let source = '';
+
+  price = await fetchFromBinance();
+  if (price !== null) source = 'binance';
+
+  if (price === null) {
+    price = await fetchFromCoinbase();
+    if (price !== null) source = 'coinbase';
   }
 
-  try {
-    const res = await fetch(
-      'https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol=APT&convert=USD',
-      {
-        headers: { 'X-CMC_PRO_API_KEY': cmcKey },
-        signal: AbortSignal.timeout(5000),
-      },
-    );
-    if (!res.ok) throw new Error(`CoinMarketCap responded ${res.status}`);
-    const data = await res.json() as {
-      data?: { APT?: { quote?: { USD?: { price?: number } } } };
-    };
-    const price = data.data?.APT?.quote?.USD?.price;
+  if (price === null) {
+    price = await fetchFromCoinGecko();
+    if (price !== null) source = 'coingecko';
+  }
 
-    if (typeof price !== 'number' || price <= 0) {
-      throw new Error('Invalid price from CoinMarketCap');
-    }
-
-    aptPriceCache = { price, fetchedAt: Date.now() };
-    response.json({ data: { price, currency: 'USD', source: 'coinmarketcap' }, success: true });
-  } catch (cause: unknown) {
-    console.error('[Price] CoinMarketCap fetch failed:', cause);
-
-    // Return cached price if available, otherwise degrade gracefully.
+  if (price === null) {
     if (aptPriceCache) {
       response.json({ data: { price: aptPriceCache.price, currency: 'USD', source: 'cache' }, success: true });
       return;
     }
-
     response.json({ data: { price: null, currency: 'USD', source: 'unavailable' }, success: true });
+    return;
   }
+
+  aptPriceCache = { price, fetchedAt: Date.now() };
+  response.json({ data: { price, currency: 'USD', source }, success: true });
 }));
 
 app.use('/api/auth', authRouter);
@@ -244,6 +297,11 @@ async function shutdown(server?: ReturnType<typeof app.listen>): Promise<void> {
     closeUploadWorker(),
     closeVerifyWorker(),
     closeUploadQueue(),
+    closeDescribeWorker(),
+    closeEmbedWorker(),
+    closeQualityWorker(),
+    closeAiQueues(),
+    closeAiRedis(),
     closeRateLimitRedisClient(),
   ]);
 
