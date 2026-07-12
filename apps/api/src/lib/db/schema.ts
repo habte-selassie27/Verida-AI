@@ -13,12 +13,22 @@ import {
   integer,
   jsonb,
   pgTable,
+  real,
   serial,
   text,
   timestamp,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
-import type { AccessSessionStatus, AccessType, DatasetTag, ProvenanceReceipt } from '@verida/shared';
+import type {
+  AccessSessionStatus,
+  AccessType,
+  DatasetTag,
+  DatasetModality,
+  DescribeStatus,
+  ProvenanceReceipt,
+  QualityBreakdown,
+  SchemaProfile,
+} from '@verida/shared';
 
 export const provenanceEventTypes = [
   'UPLOAD',
@@ -67,11 +77,27 @@ export const datasets = pgTable(
     merkleRoot: text('merkle_root').notNull(),
     verified: boolean('verified'),
     tampered: boolean('tampered').notNull().default(false),
+    // AI metadata (Module A / B / C)
+    schemaProfile: jsonb('schema_profile').$type<SchemaProfile>(),
+    aiDescription: text('ai_description'),
+    suggestedTags: text('suggested_tags').array().notNull().default([]),
+    describeStatus: text('describe_status').$type<DescribeStatus>().notNull().default('pending'),
+    describedAt: timestamp('described_at', { withTimezone: true, mode: 'string' }),
+    modality: text('modality').$type<DatasetModality>(),
+    estimatedRowCount: bigint('estimated_row_count', { mode: 'number' }),
+    qualityScore: real('quality_score'),
+    qualityBreakdown: jsonb('quality_breakdown').$type<QualityBreakdown>(),
+    qualityScoredAt: timestamp('quality_scored_at', { withTimezone: true, mode: 'string' }),
+    embedding: jsonb('embedding').$type<number[]>(),
+    embeddedAt: timestamp('embedded_at', { withTimezone: true, mode: 'string' }),
   },
   (table) => ({
     shelbyBlobIdUniqueIdx: uniqueIndex('datasets_shelby_blob_id_unique').on(table.shelbyBlobId),
     publisherAddressIdx: index('datasets_publisher_address_idx').on(table.publisherAddress),
     tagsIdx: index('datasets_tags_idx').on(table.tags),
+    modalityIdx: index('datasets_modality_idx').on(table.modality),
+    qualityScoreIdx: index('datasets_quality_score_idx').on(table.qualityScore),
+    describeStatusIdx: index('datasets_describe_status_idx').on(table.describeStatus),
   }),
 );
 

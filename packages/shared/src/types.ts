@@ -53,6 +53,83 @@ export interface ProvenanceReceipt {
   chunkCount: number;
 }
 
+export type DescribeStatus = 'pending' | 'processing' | 'completed' | 'failed';
+
+export type DatasetModality =
+  | 'tabular'
+  | 'hierarchical'
+  | 'text'
+  | 'image'
+  | 'audio'
+  | 'video'
+  | 'document'
+  | 'archive'
+  | 'other';
+
+export enum DatasetType {
+  TABULAR = 'tabular',
+  IMAGE = 'image',
+  VIDEO = 'video',
+  AUDIO = 'audio',
+  PDF = 'pdf',
+  DOCUMENT = 'document',
+  ARCHIVE = 'archive',
+  TEXT = 'text',
+  UNKNOWN = 'unknown',
+}
+
+export interface DatasetProfile {
+  title: string;
+  description: string;
+  modality: DatasetModality;
+  datasetType: DatasetType;
+  tags: string[];
+  metadata: Record<string, unknown>;
+  schema?: SchemaProfile;
+}
+
+export interface DistributionStats {
+  min?: number;
+  max?: number;
+  mean?: number;
+  median?: number;
+  [key: string]: number | undefined;
+}
+
+export interface ColumnProfile {
+  name: string;
+  inferredType: string;
+  nullRate: number;
+  cardinality: number;
+  sampleValues: string[];
+  semanticCategory?: string;
+  distributionStats?: DistributionStats;
+}
+
+export interface SchemaProfile {
+  modality: DatasetModality;
+  format?: string;
+  estimatedRowCount?: number;
+  estimatedTokenCount?: number;
+  columns?: ColumnProfile[];
+  qualitySignals?: Record<string, unknown>;
+  sampledRows?: number;
+  language?: string;
+  topNgrams?: string[];
+  avgSentenceLength?: number;
+  lexicalDiversity?: number;
+  [key: string]: unknown;
+}
+
+export interface QualityBreakdown {
+  completeness: number;
+  consistency: number;
+  uniqueness: number;
+  validity: number;
+  timeliness: number;
+  coverage: number;
+}
+
 export interface Dataset {
   id: number;
   shelby_blob_id: string;
@@ -70,6 +147,18 @@ export interface Dataset {
   merkle_root: string;
   verified: boolean | null;
   tampered: boolean;
+  access_count: number;
+  schema_profile: SchemaProfile | null;
+  ai_description: string | null;
+  suggested_tags: string[] | null;
+  describe_status: DescribeStatus | null;
+  described_at: string | null;
+  modality: DatasetModality | null;
+  estimated_row_count: number | null;
+  quality_score: number | null;
+  quality_breakdown: QualityBreakdown | null;
+  quality_scored_at: string | null;
+  embedded_at: string | null;
 }
 
 export interface DatasetVersion {

@@ -23,6 +23,8 @@ import {
 } from '../queue.js';
 import { uploadDataset } from '../../shelby/upload.js';
 import type { ShelbyUploadMetadata, ShelbyUploadProgress } from '../../shelby/client.js';
+import { DescribeQueue } from '../../../ai/queue.js';
+import { AI_CONFIG } from '../../../ai/config/ai.config.js';
 
 export interface UploadWorkerResult {
   blobId: string;
@@ -150,6 +152,7 @@ async function persistUploadedDataset(
         sizeBytes: uploadResult.receipt.size,
         tags: jobData.metadata.tags,
         tampered: false,
+        verified: false,
         version: datasetVersion,
       })
       .returning({
@@ -177,9 +180,14 @@ async function persistUploadedDataset(
       throw new UploadWorkerError('Dataset insert did not return a row.');
     }
 
+    // The returned row omits the nullable AI-enrichment columns (they are
+    // populated later by the describe worker). Cast to the full Dataset type
+    // for downstream consumers (emitUploadComplete, describe fan-out).
+    const dataset = insertedDataset as unknown as Dataset;
+
     await tx.insert(datasetVersions).values({
       changelog: null,
-      datasetId: insertedDataset.id,
+      datasetId: dataset.id,
       merkleRoot: uploadResult.merkleRoot,
       sizeBytes: uploadResult.receipt.size,
       shelbyBlobId: uploadResult.blobId,
@@ -188,7 +196,7 @@ async function persistUploadedDataset(
 
     await tx.insert(provenanceChain).values({
       actorAddress: jobData.publisherAddress,
-      datasetId: insertedDataset.id,
+      datasetId: dataset.id,
       eventType: 'UPLOAD',
       metadata: {
         contentHash: jobData.contentHash,
@@ -201,7 +209,7 @@ async function persistUploadedDataset(
       version: datasetVersion,
     });
 
-    return insertedDataset;
+    return dataset;
   });
 }
 
@@ -247,6 +255,26 @@ export function createUploadWorker(): Worker<UploadDatasetJobData, UploadWorkerR
         });
 
         const dataset = await persistUploadedDataset(job.data, uploadResult, jobId);
+
+        // Enqueue the AI describe job (Module A). Capture a 1MB sample of the
+        // temp file now, before it is deleted, so the describe pipeline can run
+        // without re-streaming from Shelby.
+        if (AI_CONFIG.describeEnabled) {
+          try {
+            const sampleBuffer = await fs.readFile(job.data.filePath).catch(() => Buffer.alloc(0));
+            const sampleBase64 = sampleBuffer.subarray(0, AI_CONFIG.sampleMaxBytes).toString('base64');
+            await DescribeQueue.add('describe', {
+              datasetId: dataset.id,
+              shelbyBlobId: uploadResult.blobId,
+              fileName: job.data.fileName ?? 'dataset',
+              mimeType: job.data.mimeType ?? 'application/octet-stream',
+              existingDescription: job.data.metadata.description,
+              sampleBase64,
+            });
+          } catch (describeCause: unknown) {
+            console.warn('[Upload] Failed to enqueue describe job:', { datasetId: dataset.id, cause: describeCause });
+          }
+        }
 
         await emitUploadComplete(jobId, dataset);
 

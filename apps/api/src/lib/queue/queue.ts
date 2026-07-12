@@ -38,6 +38,8 @@ export interface UploadDatasetJobData {
   filePath: string;
   metadata: UploadDatasetMetadata;
   publisherAddress: string;
+  fileName?: string;
+  mimeType?: string;
 }
 
 export interface VerifyIntegrityJobData {
