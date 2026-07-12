@@ -141,6 +141,26 @@ export async function getDataset(id: number): Promise<DatasetDetailResponse> {
   return request<DatasetDetailResponse>(`/api/datasets/${id}`);
 }
 
+export interface SimilarDataset {
+  id: number;
+  name: string;
+  ai_description: string | null;
+  modality: string | null;
+  price_per_access: number | null;
+  quality_score: number | null;
+  size_bytes: number;
+  suggested_tags: string[];
+  tags: string[];
+  similarity?: number;
+}
+
+export async function getSimilarDatasets(id: number, limit = 6): Promise<SimilarDataset[]> {
+  const res = await request<{
+    data: { results: SimilarDataset[]; sourceDatasetId: number; sourceModality: string | null };
+  }>(`/api/datasets/${id}/similar?limit=${limit}`);
+  return res.data.results;
+}
+
 export async function createAccessSession(
   datasetId: number,
   payerAddress: string,
@@ -153,9 +173,24 @@ export async function createAccessSession(
 }
 
 export async function verifyDataset(id: number): Promise<{ jobId: string }> {
-  return request<{ jobId: string }>(`/api/datasets/${id}/verify`, {
+  const token = getStoredToken();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const res = await fetch(`${API_BASE}/api/datasets/${id}/verify`, {
     method: 'POST',
+    headers,
   });
+
+  const body = (await res.json()) as APIResponse<{ jobId: string }>;
+
+  if (!body.success) {
+    throw new ApiError(body.error.code, body.error.error, body.error.details);
+  }
+
+  return body.data;
 }
 
 export async function getPublisher(
@@ -164,14 +199,18 @@ export async function getPublisher(
   return request<PublisherResponse>(`/api/publishers/${address}`);
 }
 
-export async function uploadDataset(formData: FormData): Promise<UploadResponse> {
+export async function uploadDataset(formData: FormData, jobId?: string): Promise<UploadResponse> {
   const token = getStoredToken();
   const headers: Record<string, string> = {};
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const res = await fetch(`${API_BASE}/api/datasets/upload`, {
+  const url = jobId
+    ? `${API_BASE}/api/datasets/upload?jobId=${encodeURIComponent(jobId)}`
+    : `${API_BASE}/api/datasets/upload`;
+
+  const res = await fetch(url, {
     method: 'POST',
     headers,
     body: formData,

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import type { Dataset } from '@verida/shared';
-import { DatasetTag } from '@verida/shared';
+import { DatasetTag, DatasetModality } from '@verida/shared';
 import { AddressDisplay } from '../components/ui/AddressDisplay';
 import { IntegrityBadge } from '../components/ui/IntegrityBadge';
 import { Badge } from '../components/ui/Badge';
@@ -9,9 +9,10 @@ import { Button } from '../components/ui/Button';
 import { Skeleton } from '../components/ui/Skeleton';
 import { TagPill } from '../components/ui/TagPill';
 import { ProvenanceTree } from '../components/ProvenanceTree';
-import { getDataset, createAccessSession, verifyDataset, listDatasets } from '../api/client';
-import type { DatasetDetailResponse } from '../api/client';
+import { getDataset, createAccessSession, verifyDataset, getSimilarDatasets } from '../api/client';
+import type { DatasetDetailResponse, SimilarDataset } from '../api/client';
 import { useWalletContext } from '../context/WalletContext';
+import { useAuth } from '../context/AuthContext';
 import './DatasetDetail.css';
 
 type TabId = 'overview' | 'versions' | 'provenance' | 'access';
@@ -147,6 +148,66 @@ function guessColCount(_dataset: Dataset): string {
   return '—';
 }
 
+const QUALITY_DIMENSIONS: { key: keyof import('@verida/shared').QualityBreakdown; label: string }[] = [
+  { key: 'completeness', label: 'Completeness' },
+  { key: 'consistency', label: 'Consistency' },
+  { key: 'uniqueness', label: 'Uniqueness' },
+  { key: 'validity', label: 'Validity' },
+  { key: 'coverage', label: 'Coverage' },
+  { key: 'timeliness', label: 'Timeliness' },
+];
+
+function qualityColor(score: number): string {
+  if (score >= 0.8) return '#4ade80';
+  if (score >= 0.6) return '#fbbf24';
+  return '#f87171';
+}
+
+const MODALITY_LABELS: Record<string, string> = {
+  tabular: 'Tabular',
+  text: 'Text',
+  image: 'Image',
+  video: 'Video',
+  audio: 'Audio',
+  code: 'Code',
+  multimodal: 'Multimodal',
+  other: 'Other',
+};
+
+const MODALITY_ICONS: Record<string, string> = {
+  tabular: '📊',
+  text: '📝',
+  image: '🖼️',
+  video: '🎬',
+  audio: '🎵',
+  code: '💻',
+  multimodal: '🔀',
+  other: '📦',
+};
+
+function getModalityLabel(modality: string | null): string {
+  if (!modality) return 'Unknown';
+  return MODALITY_LABELS[modality] ?? modality;
+}
+
+function getContentTypeLabel(schemaProfile: unknown): string | null {
+  const sp = schemaProfile as { format?: string; columns?: { name: string }[] } | null;
+  if (!sp) return null;
+  if (sp.format) return sp.format.toUpperCase();
+  if (sp.columns && sp.columns.length > 0) return 'Structured Data';
+  return null;
+}
+
+function getSemanticCategories(schemaProfile: unknown): string[] {
+  const sp = schemaProfile as { columns?: { semanticCategory?: string }[] } | null;
+  if (!sp?.columns) return [];
+  const cats = new Set<string>();
+  for (const col of sp.columns) {
+    if (col.semanticCategory) cats.add(col.semanticCategory);
+  }
+  return [...cats].slice(0, 8);
+}
+
 export default function DatasetDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -160,9 +221,11 @@ export default function DatasetDetail() {
   const [sessionExpires, setSessionExpires] = useState(0);
   const [accessLoading, setAccessLoading] = useState(false);
   const [verifyLoading, setVerifyLoading] = useState(false);
-  const [relatedDatasets, setRelatedDatasets] = useState<Dataset[]>([]);
+  const [relatedDatasets, setRelatedDatasets] = useState<SimilarDataset[]>([]);
   const [relatedLoading, setRelatedLoading] = useState(false);
+  const [showAiSummary, setShowAiSummary] = useState(true);
   const { connected, address, connect, signAndSubmitTransaction } = useWalletContext();
+  const { isAuthenticated, login: authLogin } = useAuth();
 
   const fetchDetail = useCallback(async () => {
     if (!id) return;
@@ -187,8 +250,8 @@ export default function DatasetDetail() {
 
       setRelatedLoading(true);
       try {
-        const rel = await listDatasets({ page: 1, limit: 4 });
-        setRelatedDatasets(rel.items.filter((d) => d.id !== Number(id)).slice(0, 3));
+        const rel = await getSimilarDatasets(Number(id), 4);
+        setRelatedDatasets(rel.filter((d) => d.id !== Number(id)).slice(0, 3));
       } catch {
         setRelatedDatasets([]);
       } finally {
@@ -215,11 +278,32 @@ export default function DatasetDetail() {
 
   const handleVerify = async () => {
     if (!id) return;
+    if (!connected || !address) {
+      alert('Please connect your wallet first.');
+      return;
+    }
     setVerifyLoading(true);
     try {
+      if (!isAuthenticated) {
+        await authLogin();
+      }
       await verifyDataset(Number(id));
-    } catch {
-      // error handled silently
+
+      // Verification runs as an async BullMQ job. Poll the dataset until the
+      // status settles (verified=true or tampered=true), then refresh the view.
+      const datasetId = Number(id);
+      const deadline = Date.now() + 30000;
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        const refreshed = await getDataset(datasetId);
+        const d = refreshed.dataset;
+        if (d.verified === true || d.tampered === true) {
+          setDetail(refreshed);
+          break;
+        }
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Verification failed');
     } finally {
       setVerifyLoading(false);
     }
@@ -321,14 +405,23 @@ export default function DatasetDetail() {
   const catStyle = CATEGORY_STYLES[catKey] ?? { bg: 'var(--bg-raised)', color: 'var(--text-tertiary)' };
   const catLabel = getCategoryLabel(dataset);
   const verifStatus = getVerificationStatus(dataset);
+  const alreadyVerified = verifStatus === 'verified';
   const isDescriptionLong = dataset.description.length > 400;
   const displayDesc = descExpanded || !isDescriptionLong ? dataset.description : dataset.description.slice(0, 397) + '...';
+  const aiDesc = dataset.ai_description;
+  const showAiSummaryActive = showAiSummary && !!aiDesc;
+  const qualityScore = dataset.quality_score ?? null;
+  const qualityBreakdown = dataset.quality_breakdown ?? null;
+  const suggestedTags = dataset.suggested_tags ?? [];
   const formatLabel = guessFileFormat(dataset);
   const rowCount = guessRowCount(dataset);
   const colCount = guessColCount(dataset);
   const versionCount = versions.length;
   const provCount = provenance_chain.length;
-  const priceStr = dataset.price_per_access ? `${dataset.price_per_access} APT` : '—';
+  const OCTAS_PER_APT = 100_000_000;
+  const priceStr = dataset.price_per_access
+    ? `${(dataset.price_per_access / OCTAS_PER_APT).toFixed(2)} APT`
+    : '—';
   const isOwner = connected && address === dataset.publisher_address;
 
   const provenanceEvents = provenance_chain.map((e) => ({
@@ -380,7 +473,7 @@ export default function DatasetDetail() {
           <div className="dd-header-actions">
             <IntegrityBadge status={verifStatus} size="lg" />
             <Button variant="teal-outline" size="sm" loading={verifyLoading} onClick={handleVerify}>
-              Verify Integrity
+              {alreadyVerified ? 'Re-verify Integrity' : 'Verify Integrity'}
             </Button>
             <button className="dd-action-btn" title="Actions" aria-label="Actions menu">
               <DotsIcon />
@@ -420,6 +513,20 @@ export default function DatasetDetail() {
             <span className="dd-chip-icon"><RefreshIcon /></span>
             <span className="dd-chip-label">— accesses</span>
           </div>
+          {/* AI Content Type Detection */}
+          {dataset.modality && (
+            <div className="dd-chip dd-chip-ai">
+              <span className="dd-chip-icon">{MODALITY_ICONS[dataset.modality] ?? '📦'}</span>
+              <span className="dd-chip-label">{getModalityLabel(dataset.modality)}</span>
+              <span className="dd-chip-ai-badge">AI</span>
+            </div>
+          )}
+          {getContentTypeLabel(dataset.schema_profile) && (
+            <div className="dd-chip">
+              <span className="dd-chip-icon">🔍</span>
+              <span className="dd-chip-label">{getContentTypeLabel(dataset.schema_profile)}</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -449,21 +556,58 @@ export default function DatasetDetail() {
           <div className="dd-tabpanel">
             {activeTab === 'overview' && (
               <div>
-                {/* DESCRIPTION */}
-                <div className="dd-overview-desc">
-                  {displayDesc}
-                  {isDescriptionLong && (
-                    <button className="dd-desc-toggle" onClick={() => setDescExpanded(!descExpanded)}>
-                      {descExpanded ? 'Show less ↑' : 'Show full description ↓'}
+                 {/* DESCRIPTION */}
+                {aiDesc && (
+                  <div className="dd-ai-summary-toggle">
+                    <button
+                      className={`dd-ai-toggle-btn ${showAiSummaryActive ? 'dd-ai-toggle-active' : ''}`}
+                      onClick={() => setShowAiSummary(true)}
+                    >
+                      AI Summary
                     </button>
+                    <button
+                      className={`dd-ai-toggle-btn ${!showAiSummaryActive ? 'dd-ai-toggle-active' : ''}`}
+                      onClick={() => setShowAiSummary(false)}
+                    >
+                      Publisher Description
+                    </button>
+                  </div>
+                )}
+                <div className="dd-overview-desc">
+                  {showAiSummaryActive ? (
+                    <>
+                      <span className="dd-ai-badge">AI-generated</span>
+                      <span> {aiDesc}</span>
+                    </>
+                  ) : (
+                    <>
+                      {displayDesc}
+                      {isDescriptionLong && (
+                        <button className="dd-desc-toggle" onClick={() => setDescExpanded(!descExpanded)}>
+                          {descExpanded ? 'Show less ↑' : 'Show full description ↓'}
+                        </button>
+                      )}
+                    </>
                   )}
                 </div>
 
-                {/* TAGS */}
+                 {/* TAGS */}
                 {dataset.tags.length > 0 && (
                   <div className="dd-tags-section">
                     {dataset.tags.map((tag) => (
                       <TagPill key={tag} onClick={() => navigate(`/?tag=${tag}`)}>
+                        {tag.replace(/_/g, ' ')}
+                      </TagPill>
+                    ))}
+                  </div>
+                )}
+
+                {/* AI-SUGGESTED TAGS */}
+                {suggestedTags.length > 0 && (
+                  <div className="dd-tags-section">
+                    <span className="dd-suggested-label">AI-suggested:</span>
+                    {suggestedTags.map((tag) => (
+                      <TagPill key={tag} className="tag-pill-ai" onClick={() => navigate(`/?tag=${tag}`)}>
                         {tag.replace(/_/g, ' ')}
                       </TagPill>
                     ))}
@@ -603,7 +747,7 @@ export default function DatasetDetail() {
                           {v.changelog && <div className="dd-version-changelog">{v.changelog}</div>}
                           <div className="dd-version-actions">
                             <Button variant="teal-outline" size="sm" onClick={handleVerify} loading={verifyLoading}>
-                              Verify This Version
+                              {alreadyVerified ? 'Re-verify This Version' : 'Verify This Version'}
                             </Button>
                             <Button variant="ghost" size="sm">
                               <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -651,7 +795,7 @@ export default function DatasetDetail() {
                   </div>
                 ) : (
                   <div>
-                    <div className="dd-price-display">{dataset.price_per_access ?? '0.05'} APT</div>
+                    <div className="dd-price-display">{priceStr}</div>
                     <div style={{ fontFamily: 'var(--font-sans)', fontSize: 12, color: 'var(--text-tertiary)', marginTop: 4 }}>
                       per 24-hour session
                     </div>
@@ -677,7 +821,7 @@ export default function DatasetDetail() {
                           <span className="dd-wallet-addr">{address ? `${address.slice(0, 6)}...${address.slice(-4)}` : 'Connected'}</span>
                         </div>
                         <Button variant="primary" size="lg" fullWidth loading={accessLoading} onClick={handleGetAccess}>
-                          Get Access — {dataset.price_per_access ?? '0.05'} APT
+                          Get Access — {priceStr}
                         </Button>
                       </div>
                     )}
@@ -761,6 +905,139 @@ export default function DatasetDetail() {
             </div>
           </div>
 
+          {/* PANEL 1b: Data Quality (AI) */}
+          {qualityScore !== null && (
+            <div className="dd-panel-card">
+              <div className="dd-panel-title">
+                Data Quality <span className="dd-ai-badge">AI</span>
+              </div>
+              <div className="dd-quality-head">
+                <div className="dd-quality-score" style={{ color: qualityColor(qualityScore) }}>
+                  {(qualityScore * 10).toFixed(1)}
+                </div>
+                <div className="dd-quality-outof">/ 10</div>
+              </div>
+              {qualityBreakdown && (
+                <div className="dd-quality-bars">
+                  {QUALITY_DIMENSIONS.map((d) => {
+                    const v = qualityBreakdown[d.key];
+                    return (
+                      <div key={d.key} className="dd-quality-bar-row">
+                        <span className="dd-quality-bar-label">{d.label}</span>
+                        <div className="dd-quality-bar-track">
+                          <div
+                            className="dd-quality-bar-fill"
+                            style={{ width: `${Math.round((v ?? 0) * 100)}%`, background: qualityColor(v ?? 0) }}
+                          />
+                        </div>
+                        <span className="dd-quality-bar-val">{Math.round((v ?? 0) * 100)}%</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              <div className="dd-quality-foot">Scored by Verida AI</div>
+            </div>
+          )}
+
+          {/* PANEL 1c: Schema Analysis (AI) */}
+          {dataset.schema_profile && (
+            <div className="dd-panel-card">
+              <div className="dd-panel-title">
+                Schema Analysis <span className="dd-ai-badge">AI</span>
+              </div>
+              <div className="dd-schema-section">
+                {dataset.schema_profile.columns && dataset.schema_profile.columns.length > 0 && (
+                  <>
+                    <div className="dd-schema-stat">
+                      <span className="dd-schema-stat-label">Columns detected</span>
+                      <span className="dd-schema-stat-value">{dataset.schema_profile.columns.length}</span>
+                    </div>
+                    <div className="dd-schema-stat">
+                      <span className="dd-schema-stat-label">Estimated rows</span>
+                      <span className="dd-schema-stat-value">
+                        {dataset.schema_profile.estimatedRowCount?.toLocaleString() ?? dataset.estimated_row_count?.toLocaleString() ?? '—'}
+                      </span>
+                    </div>
+                    {dataset.schema_profile.language && (
+                      <div className="dd-schema-stat">
+                        <span className="dd-schema-stat-label">Language</span>
+                        <span className="dd-schema-stat-value">{dataset.schema_profile.language}</span>
+                      </div>
+                    )}
+                    <div className="dd-schema-columns">
+                      <div className="dd-schema-columns-title">Column Details</div>
+                      {dataset.schema_profile.columns.slice(0, 10).map((col, i) => (
+                        <div key={i} className="dd-schema-col">
+                          <div className="dd-schema-col-header">
+                            <span className="dd-schema-col-name">{col.name}</span>
+                            <span className="dd-schema-col-type">{col.inferredType}</span>
+                          </div>
+                          <div className="dd-schema-col-meta">
+                            <span className="dd-schema-col-stat">{((col.nullRate ?? 0) * 100).toFixed(1)}% null</span>
+                            <span className="dd-schema-col-stat">{col.cardinality.toLocaleString()} unique</span>
+                            {col.semanticCategory && (
+                              <span className="dd-schema-col-cat">{col.semanticCategory}</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                      {dataset.schema_profile.columns.length > 10 && (
+                        <div className="dd-schema-more">
+                          +{dataset.schema_profile.columns.length - 10} more columns
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+                {getSemanticCategories(dataset.schema_profile).length > 0 && (
+                  <div className="dd-schema-categories">
+                    <div className="dd-schema-cats-title">Semantic Categories</div>
+                    <div className="dd-schema-cats-list">
+                      {getSemanticCategories(dataset.schema_profile).map((cat) => (
+                        <span key={cat} className="dd-schema-cat-pill">{cat}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* PANEL 1d: AI Pipeline Status */}
+          <div className="dd-panel-card">
+            <div className="dd-panel-title">
+              AI Pipeline <span className="dd-ai-badge">AI</span>
+            </div>
+            <div className="dd-pipeline-list">
+              <div className="dd-pipeline-item">
+                <span className={`dd-pipeline-dot ${dataset.describe_status === 'completed' ? 'dd-pipeline-dot-done' : ''}`} />
+                <span className="dd-pipeline-label">Content Detection</span>
+                <span className="dd-pipeline-status">{dataset.describe_status === 'completed' ? 'Done' : 'Pending'}</span>
+              </div>
+              <div className="dd-pipeline-item">
+                <span className={`dd-pipeline-dot ${dataset.ai_description ? 'dd-pipeline-dot-done' : ''}`} />
+                <span className="dd-pipeline-label">AI Description</span>
+                <span className="dd-pipeline-status">{dataset.ai_description ? 'Done' : 'Pending'}</span>
+              </div>
+              <div className="dd-pipeline-item">
+                <span className={`dd-pipeline-dot ${dataset.suggested_tags && dataset.suggested_tags.length > 0 ? 'dd-pipeline-dot-done' : ''}`} />
+                <span className="dd-pipeline-label">Tag Prediction</span>
+                <span className="dd-pipeline-status">{dataset.suggested_tags && dataset.suggested_tags.length > 0 ? `${dataset.suggested_tags.length} tags` : 'Pending'}</span>
+              </div>
+              <div className="dd-pipeline-item">
+                <span className={`dd-pipeline-dot ${dataset.quality_score !== null ? 'dd-pipeline-dot-done' : ''}`} />
+                <span className="dd-pipeline-label">Quality Scoring</span>
+                <span className="dd-pipeline-status">{dataset.quality_score !== null ? `${(dataset.quality_score * 10).toFixed(1)}/10` : 'Pending'}</span>
+              </div>
+              <div className="dd-pipeline-item">
+                <span className={`dd-pipeline-dot ${dataset.embedded_at ? 'dd-pipeline-dot-done' : ''}`} />
+                <span className="dd-pipeline-label">Embeddings</span>
+                <span className="dd-pipeline-status">{dataset.embedded_at ? 'Generated' : 'Pending'}</span>
+              </div>
+            </div>
+          </div>
+
           {/* PANEL 2: Publisher Card */}
           <div className="dd-panel-card">
             <div className="dd-panel-title">Publisher</div>
@@ -797,13 +1074,15 @@ export default function DatasetDetail() {
               merkleRoot: {dataset.merkle_root.slice(0, 14)}...
             </div>
             <Button variant="teal-outline" size="sm" fullWidth loading={verifyLoading} onClick={handleVerify}>
-              Verify Now
+              {alreadyVerified ? 'Re-verify Now' : 'Verify Now'}
             </Button>
           </div>
 
-          {/* PANEL 4: Related Datasets */}
+          {/* PANEL 4: Similar Datasets (AI) */}
           <div className="dd-panel-card">
-            <div className="dd-panel-title">Related Datasets</div>
+            <div className="dd-panel-title">
+              Similar Datasets <span className="dd-ai-badge">AI</span>
+            </div>
             {relatedLoading ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <Skeleton variant="card" height="80px" />
@@ -812,7 +1091,7 @@ export default function DatasetDetail() {
               </div>
             ) : relatedDatasets.length === 0 ? (
               <div style={{ fontFamily: 'var(--font-sans)', fontSize: 12, color: 'var(--text-tertiary)' }}>
-                No related datasets
+                No similar datasets found
               </div>
             ) : (
               <div className="dd-related-list">
@@ -822,7 +1101,14 @@ export default function DatasetDetail() {
                       <div className="dd-related-name">{rel.name}</div>
                       <div className="dd-related-meta">
                         <Badge variant="version">{formatBytes(rel.size_bytes)}</Badge>
-                        <span className="dd-related-version">v{rel.version}</span>
+                        {typeof rel.similarity === 'number' && (
+                          <span className="dd-related-sim">{Math.round(rel.similarity * 100)}% match</span>
+                        )}
+                        {rel.quality_score !== null && rel.quality_score !== undefined && (
+                          <span className="dd-related-quality" style={{ color: qualityColor(rel.quality_score) }}>
+                            {(rel.quality_score * 10).toFixed(1)}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </Link>

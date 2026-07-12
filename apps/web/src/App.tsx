@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
 import Home from './pages/Home';
+import Marketplace from './pages/Marketplace';
 import DatasetDetail from './pages/DatasetDetail';
 import PublisherProfile from './pages/PublisherProfile';
 import Upload from './pages/Upload';
@@ -21,6 +22,7 @@ export default function App() {
           <Routes>
             <Route element={<Layout />}>
               <Route path="/" element={<Home />} />
+              <Route path="/marketplace" element={<Marketplace />} />
               <Route path="/datasets/:id" element={<DatasetDetail />} />
               <Route path="/publishers/:address" element={<PublisherProfile />} />
               <Route path="/upload" element={<Upload />} />
