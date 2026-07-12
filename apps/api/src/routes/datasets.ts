@@ -16,7 +16,7 @@ import { and, asc, count, desc, eq, sql } from 'drizzle-orm';
 import { Router, type Request, type Response } from 'express';
 import asyncHandler from 'express-async-handler';
 import multer from 'multer';
-import { AccessType, DatasetTag } from '@verida/shared';
+import { AccessType, DatasetTag, type DatasetModality } from '@verida/shared';
 import { z } from 'zod';
 
 import { db, accessSessions, datasets, datasetVersions, provenanceChain, publishers } from '../lib/db/index.js';
@@ -28,9 +28,20 @@ import {
   type UploadDatasetMetadata,
   type VerifyIntegrityJobData,
 } from '../lib/queue/queue.js';
+import { embedText } from '../ai/serving/client.js';
+import { cosineSimilarity } from '../ai/serving/similarity.js';
 import { ShelbyAccessError, streamDataset, validateSession } from '../lib/shelby/index.js';
 import { getAuthenticatedAddress, requireAuth } from '../middleware/auth.js';
 import { streamRateLimit, uploadRateLimit } from '../middleware/rateLimit.js';
+
+const accessCountSubquery = db
+  .select({
+    datasetId: accessSessions.datasetId,
+    accessCount: count(accessSessions.id).as('access_count'),
+  })
+  .from(accessSessions)
+  .groupBy(accessSessions.datasetId)
+  .as('access_counts');
 
 function escapeLikeWildcards(input: string): string {
   return input.replace(/[%_]/g, (char) => `\\${char}`);
@@ -146,11 +157,15 @@ function parseRouteDatasetId(request: Request): number {
 
 function parseListQuery(request: Request): z.infer<typeof listQuerySchema> {
   const parsed = listQuerySchema.safeParse({
+    accessType: getSingleValue(request.query.accessType as QueryValue),
     limit: getSingleValue(request.query.limit as QueryValue),
     license: getSingleValue(request.query.license as QueryValue),
     page: getSingleValue(request.query.page as QueryValue),
     publisher: getSingleValue(request.query.publisher as QueryValue),
+    search: getSingleValue(request.query.search as QueryValue),
+    sort: getSingleValue(request.query.sort as QueryValue),
     tag: getSingleValue(request.query.tag as QueryValue),
+    tags: getSingleValue(request.query.tags as QueryValue),
   });
 
   if (!parsed.success) {
@@ -624,11 +639,20 @@ datasetsRouter.post(
       filePath: file.path,
       metadata,
       publisherAddress: authenticatedAddress,
+      fileName: file.originalname,
+      mimeType: file.mimetype,
     };
 
-    const clientJobId = typeof req.body.jobId === 'string' && req.body.jobId.length > 0
-      ? req.body.jobId
-      : undefined;
+    const clientJobId = (() => {
+      const fromQuery = typeof request.query.jobId === 'string' && request.query.jobId.length > 0
+        ? request.query.jobId
+        : undefined;
+      if (fromQuery) return fromQuery;
+      const fromBody = typeof request.body?.jobId === 'string' && request.body.jobId.length > 0
+        ? request.body.jobId
+        : undefined;
+      return fromBody;
+    })();
 
     const job = await UploadDatasetQueue.add(UploadJobTypes.UPLOAD_DATASET, jobData, {
       attempts: 3,
@@ -676,8 +700,9 @@ datasetsRouter.get(
 
     if (query.search !== undefined) {
       const escapedSearch = escapeLikeWildcards(query.search);
+      const pattern = '%' + escapedSearch + '%';
       filters.push(
-        sql`(${datasets.name} ILIKE ${'%' + escapedSearch + '%'} OR ${datasets.description} ILIKE ${'%' + escapedSearch + '%'})`,
+        sql`(${datasets.name} ILIKE ${pattern} OR ${datasets.description} ILIKE ${pattern} OR ${datasets.aiDescription} ILIKE ${pattern} OR ${datasets.tags}::text[] && ARRAY[${escapedSearch}]::text[] OR ${datasets.suggestedTags}::text[] && ARRAY[${escapedSearch}]::text[])`,
       );
     }
 
@@ -692,20 +717,20 @@ datasetsRouter.get(
     const whereClause = filters.length > 0 ? and(...filters) : undefined;
 
     let orderByClause;
-    let needsAccessCountJoin = false;
-    const accessCountSubquery = db
-      .select({
-        datasetId: accessSessions.datasetId,
-        accessCount: count(accessSessions.id).as('access_count'),
-      })
-      .from(accessSessions)
-      .groupBy(accessSessions.datasetId)
-      .as('access_counts');
 
-    if (query.sort === 'largest') {
+    if (query.search) {
+      // Relevance ranking: title match > AI description match > description match > latest
+      const escapedSearch = escapeLikeWildcards(query.search);
+      const pattern = '%' + escapedSearch + '%';
+      orderByClause = sql`CASE
+        WHEN ${datasets.name} ILIKE ${pattern} THEN 0
+        WHEN ${datasets.aiDescription} ILIKE ${pattern} THEN 1
+        WHEN ${datasets.description} ILIKE ${pattern} THEN 2
+        ELSE 3
+      END, ${desc(datasets.createdAt)}`;
+    } else if (query.sort === 'largest') {
       orderByClause = desc(datasets.sizeBytes);
     } else if (query.sort === 'most_accessed') {
-      needsAccessCountJoin = true;
       orderByClause = desc(sql`COALESCE(${accessCountSubquery.accessCount}, 0)`);
     } else {
       orderByClause = desc(datasets.createdAt);
@@ -713,19 +738,25 @@ datasetsRouter.get(
 
     let selectQuery = db
       .select({
-        access_count: sql<string>`COALESCE(${accessCountSubquery.accessCount}, 0)`,
+        access_count: sql<number>`COALESCE(${accessCountSubquery.accessCount}, 0)`,
         access_type: datasets.accessType,
+        ai_description: datasets.aiDescription,
         created_at: datasets.createdAt,
         description: datasets.description,
+        describe_status: datasets.describeStatus,
         id: datasets.id,
         license: datasets.license,
         merkle_root: datasets.merkleRoot,
+        modality: datasets.modality,
         name: datasets.name,
         price_per_access: datasets.pricePerAccess,
         provenance_receipt: datasets.provenanceReceipt,
         publisher_address: datasets.publisherAddress,
+        quality_score: datasets.qualityScore,
+        schema_profile: datasets.schemaProfile,
         shelby_blob_id: datasets.shelbyBlobId,
         size_bytes: datasets.sizeBytes,
+        suggested_tags: datasets.suggestedTags,
         tags: datasets.tags,
         tampered: datasets.tampered,
         verified: datasets.verified,
@@ -733,6 +764,7 @@ datasetsRouter.get(
       })
       .from(datasets)
       .leftJoin(accessCountSubquery, eq(datasets.id, accessCountSubquery.datasetId))
+      .groupBy(datasets.id)
       .orderBy(orderByClause)
       .limit(query.limit)
       .offset(offset);
@@ -762,30 +794,140 @@ datasetsRouter.get(
   }),
 );
 
+// GET /api/datasets/semantic-search — hybrid dense + lexical retrieval.
+// Dense path requires embeddings (set by the embed worker). When no embedding
+// is available for the query, it gracefully degrades to lexical (ILIKE + ts_rank).
+datasetsRouter.get(
+  '/semantic-search',
+  asyncHandler(async (request: Request, response: Response): Promise<void> => {
+    const q = typeof request.query.q === 'string' ? request.query.q.trim() : '';
+    if (q.length < 2) {
+      throw new ApiRouteError({
+        code: 'INVALID_QUERY',
+        message: 'Query parameter q must be at least 2 characters.',
+        statusCode: 400,
+      });
+    }
+    const limit = Math.min(Number(request.query.limit) || 20, 50);
+    const modalityFilter =
+      typeof request.query.modality === 'string' && request.query.modality.length > 0
+        ? request.query.modality
+        : undefined;
+    const minQuality =
+      typeof request.query.min_quality === 'string'
+        ? Number(request.query.min_quality)
+        : undefined;
+
+    const filters: SQL<unknown>[] = [eq(datasets.tampered, false)];
+    if (modalityFilter) filters.push(eq(datasets.modality, modalityFilter as DatasetModality));
+    if (minQuality !== undefined && Number.isFinite(minQuality)) {
+      filters.push(sql`${datasets.qualityScore} >= ${minQuality}`);
+    }
+
+    const queryEmbedding = await embedText(q);
+
+    let ranked: Array<Record<string, unknown>>;
+
+    if (queryEmbedding && queryEmbedding.length > 0) {
+      const all = await db
+        .select({
+          ai_description: datasets.aiDescription,
+          description: datasets.description,
+          embedding: datasets.embedding,
+          id: datasets.id,
+          modality: datasets.modality,
+          name: datasets.name,
+          price_per_access: datasets.pricePerAccess,
+          quality_score: datasets.qualityScore,
+          size_bytes: datasets.sizeBytes,
+          suggested_tags: datasets.suggestedTags,
+          tags: datasets.tags,
+          verified: datasets.verified,
+        })
+        .from(datasets)
+        .where(and(...filters));
+      const embedded = all.filter(
+        (d): d is typeof d & { embedding: number[] } => Array.isArray(d.embedding),
+      );
+      ranked = embedded
+        .map((d) => ({ ...d, similarity: cosineSimilarity(queryEmbedding, d.embedding) }))
+        .sort((a, b) => b.similarity - a.similarity)
+        .slice(0, limit);
+    } else {
+      const escaped = escapeLikeWildcards(q);
+      ranked = await db
+        .select({
+          ai_description: datasets.aiDescription,
+          description: datasets.description,
+          id: datasets.id,
+          modality: datasets.modality,
+          name: datasets.name,
+          price_per_access: datasets.pricePerAccess,
+          quality_score: datasets.qualityScore,
+          size_bytes: datasets.sizeBytes,
+          suggested_tags: datasets.suggestedTags,
+          tags: datasets.tags,
+          verified: datasets.verified,
+          lexical_score: sql<number>`ts_rank(to_tsvector('english', coalesce(${datasets.name},'') || ' ' || coalesce(${datasets.aiDescription},'') || ' ' || coalesce(${datasets.description},'')), plainto_tsquery('english', ${q}))`,
+        })
+        .from(datasets)
+        .where(
+          and(
+            ...filters,
+            sql`(${datasets.name} ILIKE ${'%' + escaped + '%'} OR ${datasets.description} ILIKE ${'%' + escaped + '%'} OR ${datasets.aiDescription} ILIKE ${'%' + escaped + '%'})`,
+          ),
+        )
+        .orderBy(sql`ts_rank(to_tsvector('english', coalesce(${datasets.name},'') || ' ' || coalesce(${datasets.aiDescription},'') || ' ' || coalesce(${datasets.description},'')), plainto_tsquery('english', ${q})) desc`)
+        .limit(limit);
+    }
+
+    response.json({
+      data: {
+        query: q,
+        results: ranked,
+        searchType: queryEmbedding && queryEmbedding.length > 0 ? 'semantic' : 'lexical_fallback',
+        totalReturned: ranked.length,
+      },
+      success: true,
+    });
+  }),
+);
+
 datasetsRouter.get(
   '/:id',
   asyncHandler(async (request: Request, response: Response): Promise<void> => {
     const datasetId = parseRouteDatasetId(request);
     const datasetRows = await db
       .select({
+        access_count: sql<number>`COALESCE(${accessCountSubquery.accessCount}, 0)`,
         access_type: datasets.accessType,
+        ai_description: datasets.aiDescription,
         created_at: datasets.createdAt,
         description: datasets.description,
+        describe_status: datasets.describeStatus,
+        embedded_at: datasets.embeddedAt,
+        estimated_row_count: datasets.estimatedRowCount,
         id: datasets.id,
         license: datasets.license,
         merkle_root: datasets.merkleRoot,
+        modality: datasets.modality,
         name: datasets.name,
         price_per_access: datasets.pricePerAccess,
         provenance_receipt: datasets.provenanceReceipt,
         publisher_address: datasets.publisherAddress,
+        quality_breakdown: datasets.qualityBreakdown,
+        quality_score: datasets.qualityScore,
+        schema_profile: datasets.schemaProfile,
         shelby_blob_id: datasets.shelbyBlobId,
         size_bytes: datasets.sizeBytes,
+        suggested_tags: datasets.suggestedTags,
         tags: datasets.tags,
         tampered: datasets.tampered,
         verified: datasets.verified,
         version: datasets.version,
       })
       .from(datasets)
+      .leftJoin(accessCountSubquery, eq(datasets.id, accessCountSubquery.datasetId))
       .where(eq(datasets.id, datasetId))
       .limit(1);
     const datasetRecord = datasetRows.at(0);
@@ -862,6 +1004,58 @@ datasetsRouter.post(
   }),
 );
 
+// GET /api/datasets/:id/similar — related datasets by embedding cosine similarity.
+datasetsRouter.get(
+  '/:id/similar',
+  asyncHandler(async (request: Request, response: Response): Promise<void> => {
+    const datasetId = parseRouteDatasetId(request);
+    const limit = Math.min(Number(request.query.limit) || 6, 20);
+
+    const target = await db
+      .select({ embedding: datasets.embedding, modality: datasets.modality })
+      .from(datasets)
+      .where(eq(datasets.id, datasetId))
+      .limit(1)
+      .then((r) => r[0]);
+
+    if (!target?.embedding) {
+      response.json({ data: { results: [], reason: 'embedding_not_ready' }, success: true });
+      return;
+    }
+
+    const candidates = await db
+      .select({
+        ai_description: datasets.aiDescription,
+        embedding: datasets.embedding,
+        id: datasets.id,
+        modality: datasets.modality,
+        name: datasets.name,
+        price_per_access: datasets.pricePerAccess,
+        quality_score: datasets.qualityScore,
+        size_bytes: datasets.sizeBytes,
+        suggested_tags: datasets.suggestedTags,
+        tags: datasets.tags,
+        tampered: datasets.tampered,
+      })
+      .from(datasets)
+      .where(and(eq(datasets.tampered, false), sql`${datasets.id} != ${datasetId}`));
+
+    const results = candidates
+      .filter((c): c is typeof c & { embedding: number[] } => Array.isArray(c.embedding))
+      .map((c) => ({ ...c, similarity: cosineSimilarity(target.embedding as number[], c.embedding) }))
+      .sort((a, b) => b.similarity - a.similarity)
+      .slice(0, limit);
+
+    response.json({
+      data: { results, sourceDatasetId: datasetId, sourceModality: target.modality },
+      success: true,
+    });
+  }),
+);
+
+// GET /api/datasets/semantic-search — hybrid dense + lexical retrieval.
+// Dense path requires embeddings (set by the embed worker). When no embedding
+// is available for the query, it gracefully degrades to lexical (ILIKE + ts_rank).
 datasetsRouter.get(
   '/:id/stream',
   streamRateLimit,

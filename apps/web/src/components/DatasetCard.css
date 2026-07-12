@@ -63,11 +63,28 @@
   overflow: hidden;
 }
 
-.dc-publisher {
+.dc-meta-row {
   display: flex;
   align-items: center;
   gap: 4px;
   margin-top: 3px;
+}
+
+.dc-meta-item {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
+.dc-meta-dot {
+  color: var(--text-quaternary);
+  font-size: 10px;
+}
+
+.dc-meta-score {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
 }
 
 .dc-tags {
@@ -88,65 +105,4 @@
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-}
-
-.dc-status {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: var(--sp-3);
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.dc-access-count {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-family: var(--font-sans);
-  font-size: var(--text-xs);
-  color: var(--text-tertiary);
-}
-
-.dc-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  border-top: 0.5px solid var(--border-subtle);
-  padding-top: var(--sp-2);
-  margin-top: var(--sp-3);
-}
-
-.dc-merkle {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.dc-merkle-label {
-  font-family: var(--font-sans);
-  font-size: 10px;
-  color: var(--text-quaternary);
-}
-
-.dc-merkle-value {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--text-tertiary);
-}
-
-.dc-aptos-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  font-family: var(--font-sans);
-  font-size: 10px;
-  color: var(--text-teal);
-  text-decoration: none;
-  opacity: 0;
-  transition: opacity var(--dur-fast) var(--ease-out);
-}
-
-.dc:hover .dc-aptos-link {
-  opacity: 1;
 }
