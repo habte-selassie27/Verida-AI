@@ -117,7 +117,7 @@ export function createUploadProgressWebSocketServer(
     }
 
     wss.handleUpgrade(request, socket, head, (ws) => {
-      ws.emit('connection', ws, request);
+      wss.emit('connection', ws, request);
     });
   });
 

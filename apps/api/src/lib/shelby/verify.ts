@@ -42,6 +42,12 @@ async function extractMerkleRoot(metadata: ShelbyBlobMetadataLike): Promise<stri
     return candidate;
   }
 
+  if (candidate instanceof Uint8Array) {
+    return `0x${Array.from(candidate)
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('')}`;
+  }
+
   if (candidate !== null && typeof candidate === 'object') {
     const record = candidate as Record<string, unknown>;
     const possibleKeys = ['blobMerkleRoot', 'merkleRoot', 'root', 'hash', 'value'];
@@ -50,6 +56,11 @@ async function extractMerkleRoot(metadata: ShelbyBlobMetadataLike): Promise<stri
       const value = record[key];
       if (typeof value === 'string') {
         return value;
+      }
+      if (value instanceof Uint8Array) {
+        return `0x${Array.from(value)
+          .map((b) => b.toString(16).padStart(2, '0'))
+          .join('')}`;
       }
     }
   }

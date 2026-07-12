@@ -72,8 +72,9 @@ async function resolveBlobName(filePath: string, metadata: ShelbyUploadMetadata)
   const hashPrefix = normalizedContentHash.slice(0, 12);
   const fileName = path.basename(filePath).replaceAll('\\', '/');
   const baseName = fileName.replace(/\.[^.]+$/, '');
+  const ts = Date.now().toString(36);
 
-  const candidate = `${hashPrefix}-${baseName}`;
+  const candidate = `${hashPrefix}-${baseName}-${ts}`;
 
   return truncateToMax(candidate, MAX_BLOB_NAME_LENGTH);
 }

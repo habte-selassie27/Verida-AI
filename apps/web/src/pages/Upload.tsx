@@ -144,8 +144,6 @@ function ExternalLinkIcon() {
   );
 }
 
-const UPLOAD_DRAFT_KEY = 'verida_upload_draft';
-
 export default function Upload() {
   const navigate = useNavigate();
   const { address, connected } = useWalletContext();
@@ -163,8 +161,6 @@ export default function Upload() {
   const [accessType, setAccessType] = useState<AccessType>(AccessType.FREE);
   const [price, setPrice] = useState('');
   const [aptPriceUsd, setAptPriceUsd] = useState<number | null>(null);
-  const [restoredFileName, setRestoredFileName] = useState<string | null>(null);
-  const [restoredFileSize, setRestoredFileSize] = useState<string | null>(null);
 
   const [uploading, setUploading] = useState(false);
   const [uploadPercent, setUploadPercent] = useState(0);
@@ -193,42 +189,12 @@ export default function Upload() {
     return () => { cancelled = true; };
   }, []);
 
-  // Load draft from localStorage on mount
+  // Clear any stale draft from previous sessions on mount
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(UPLOAD_DRAFT_KEY);
-      if (!raw) return;
-      const draft = JSON.parse(raw);
-      if (draft.name) setName(draft.name);
-      if (draft.description) setDescription(draft.description);
-      if (Array.isArray(draft.tags)) setTags(draft.tags);
-      if (draft.license) setLicense(draft.license);
-      if (draft.accessType) setAccessType(draft.accessType);
-      if (draft.price) setPrice(draft.price);
-      if (typeof draft.currentStep === 'number') setCurrentStep(draft.currentStep);
-      if (draft.fileName) setRestoredFileName(draft.fileName);
-      if (draft.fileSize) setRestoredFileSize(draft.fileSize);
-    } catch { /* ignore */ }
+    try { localStorage.removeItem(UPLOAD_DRAFT_KEY); } catch { /* ignore */ }
   }, []);
 
-  // Debounced save draft to localStorage
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      const draft = {
-        name,
-        description,
-        tags,
-        license,
-        accessType,
-        price,
-        currentStep,
-        fileName: file?.name ?? restoredFileName,
-        fileSize: file ? formatSize(file.size) : restoredFileSize,
-      };
-      try { localStorage.setItem(UPLOAD_DRAFT_KEY, JSON.stringify(draft)); } catch { /* ignore */ }
-    }, 500);
-    return () => clearTimeout(timer);
-  }, [name, description, tags, license, accessType, price, currentStep, file, restoredFileName, restoredFileSize]);
+
 
   useEffect(() => {
     if (!file) {
@@ -260,12 +226,12 @@ export default function Upload() {
     e.stopPropagation();
     setDragOver(false);
     const f = e.dataTransfer.files?.[0];
-    if (f) { setFile(f); setRestoredFileName(null); setRestoredFileSize(null); }
+    if (f) setFile(f);
   }, []);
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
-    if (f) { setFile(f); setRestoredFileName(null); setRestoredFileSize(null); }
+    if (f) setFile(f);
   }, []);
 
   const handleRemoveFile = useCallback(() => {
@@ -410,7 +376,6 @@ export default function Upload() {
           ws.close();
           setTimeout(() => {
             setUploading(false);
-            clearDraft();
             setReceipt({
               jobId,
               blobId: msg.dataset?.shelby_blob_id ?? 'Pending...',
@@ -426,7 +391,7 @@ export default function Upload() {
           setUploading(false);
         }
       } catch {
-        // Ignore parse errors
+        setUploadError('Failed to parse upload progress.');
       }
     };
 
@@ -457,19 +422,13 @@ export default function Upload() {
         formData.append('pricePerAccess', String(Math.round(parseFloat(price) * 100_000_000)));
       }
 
-      await uploadDataset(formData);
+      await uploadDataset(formData, jobId);
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : 'Upload failed');
       setUploading(false);
       ws.close();
     }
   }, [file, address, name, description, license, accessType, price, tags]);
-
-  function clearDraft() {
-    try { localStorage.removeItem(UPLOAD_DRAFT_KEY); } catch { /* ignore */ }
-    setRestoredFileName(null);
-    setRestoredFileSize(null);
-  }
 
   const handleCloseReceipt = useCallback(() => {
     setReceipt(null);
@@ -489,7 +448,6 @@ export default function Upload() {
     setUploadPercent(0);
     setUploadStage(0);
     setChunksDone(0);
-    clearDraft();
   }, []);
 
   const step = (s: number, label: string) => {
@@ -549,13 +507,6 @@ export default function Upload() {
           <div className="step-panel">
             {!file ? (
               <div>
-                {restoredFileName && (
-                  <div className="restored-file-banner">
-                    Previously selected: <strong>{restoredFileName}</strong>
-                    {restoredFileSize && <span className="restored-file-size">{restoredFileSize}</span>}
-                    <span className="restored-file-hint"> — re-select the file to continue</span>
-                  </div>
-                )}
                 <div
                   ref={dropRef}
                   className={`drop-zone${dragOver ? ' drop-zone-active' : ''}`}
