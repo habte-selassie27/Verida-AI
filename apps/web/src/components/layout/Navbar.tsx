@@ -75,7 +75,8 @@ export function Navbar() {
   };
 
   const navLinks = [
-    { to: '/', label: 'Marketplace', end: true },
+    { to: '/', label: 'Home', end: true },
+    { to: '/marketplace', label: 'Marketplace' },
     { to: '/upload', label: 'Upload' },
     { to: '/dashboard', label: 'Dashboard' },
   ];
