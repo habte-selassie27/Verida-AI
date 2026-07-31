@@ -231,16 +231,17 @@ export async function uploadDataset(
 
     // NOTE: @shelby-protocol/sdk 0.0.9's registerBlob builds a payload for an
     // outdated contract ABI (7 args) and fails against the deployed shelbynet
-    // module, which expects 10 args including two Option<String> etag fields:
-    // register_blob(&signer, String, Option<String>, Option<String>, u64,
-    // vector<u8>, u32, u64, u8, u8, u8)
+    // module, which expects 10 args including a location hint and an etag:
+    // register_blob(&signer, String, Option<String> location, Option<String> etag,
+    // u64, vector<u8>, u32, u64, u8, u8, u8)
+    const shelbyLocation = process.env.SHELBY_LOCATION?.trim() ?? 'shelbynet-1';
     const writeBlobRegistration = await runWithTransientRetries(async () => {
       const transaction = await aptosClient.transaction.build.simple({
         data: {
           function: '0x85fdb9a176ab8ef1d9d9c1b60d60b3924f0800ac1de1cc2085fb0b8bb4988e6a::blob_metadata::register_blob',
           functionArguments: [
             blobName,
-            new MoveOption<MoveString>(null),
+            new MoveOption(new MoveString(shelbyLocation)),
             new MoveOption<MoveString>(null),
             expirationMicros,
             MoveVector.U8(blobCommitments.blob_merkle_root),
