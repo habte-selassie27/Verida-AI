@@ -150,6 +150,7 @@
   height: 500px;
   border-radius: var(--r-2xl);
   overflow: hidden;
+  background: var(--bg-deep);
 }
 
 .home-3d-loading {
