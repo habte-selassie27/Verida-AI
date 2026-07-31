@@ -9,8 +9,22 @@ services:
       - key: NODE_ENV
         value: production
       - key: SHELBY_NETWORK
-        value: testnet
-      - key: CMC_API_KEY
+        value: shelbynet
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: SHELBY_API_KEY
+        sync: false
+      - key: SHELBY_SIGNER_PRIVATE_KEY
+        sync: false
+      - key: SHELBY_RPC_URL
+        sync: false
+      - key: GOOGLE_AI_API_KEY
+        sync: false
+      - key: APTOS_NODE_URL
         sync: false
     healthCheckPath: /healthz
     autoDeploy: true
