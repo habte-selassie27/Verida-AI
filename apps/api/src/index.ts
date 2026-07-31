@@ -241,6 +241,7 @@ app.use((_request: Request, response: Response): void => {
 });
 
 const errorHandler: ErrorRequestHandler = (error, _request, response, _next): void => {
+  console.error('[API] Unhandled error:', error);
   if (error instanceof ApiRouteError) {
     response.status(error.statusCode).json({
       error: {
