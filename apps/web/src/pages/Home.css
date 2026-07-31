@@ -178,6 +178,63 @@
   to { transform: rotate(360deg); }
 }
 
+/* ─── 3D FALLBACK (WebGL failure) ──────────────────────────────── */
+.home-3d-fallback {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  background: linear-gradient(135deg, #050816 0%, #0a0f1e 50%, #0d1225 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.home-3d-fallback-grid {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 48px 48px;
+  opacity: 0.3;
+}
+
+.home-3d-fallback-nodes {
+  position: absolute;
+  inset: 0;
+}
+
+.home-3d-fallback-node {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--neon-teal);
+  box-shadow: 0 0 12px var(--neon-teal), 0 0 24px rgba(0, 245, 212, 0.3);
+  left: var(--x);
+  top: var(--y);
+  animation: fallback-pulse 3s ease-in-out infinite;
+  animation-delay: var(--delay);
+}
+
+@keyframes fallback-pulse {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50% { opacity: 0.8; transform: scale(1.3); }
+}
+
+.home-3d-fallback-label {
+  position: relative;
+  z-index: 1;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  background: rgba(5, 8, 22, 0.7);
+  padding: 6px 14px;
+  border-radius: var(--r-full);
+  border: 0.5px solid var(--glass-border);
+}
+
 /* ─── FLOATING CARDS ─────────────────────────────────────────────── */
 .floating-cards-grid {
   position: absolute;

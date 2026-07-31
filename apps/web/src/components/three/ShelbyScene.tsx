@@ -1,8 +1,9 @@
-import { useRef, useMemo, useState } from 'react';
+import { useRef, useMemo, useState, useCallback } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Float, Sphere, Line, Trail, Billboard, Text } from '@react-three/drei';
 import { EffectComposer, Bloom } from '@react-three/postprocessing';
 import * as THREE from 'three';
+import SceneErrorBoundary from './SceneErrorBoundary';
 
 // ─── Color Palette ─────────────────────────────────────────────────
 const TEAL = '#00F5D4';
@@ -328,16 +329,32 @@ function Scene() {
 
 // ─── Exported Canvas Wrapper ───────────────────────────────────────
 export default function ShelbyScene() {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const handleContextLost = useCallback((e: Event) => {
+    e.preventDefault();
+    console.warn('[ShelbyScene] WebGL context lost');
+  }, []);
+
+  const containerRefCallback = useCallback((node: HTMLDivElement | null) => {
+    if (node) {
+      node.addEventListener('webglcontextlost', handleContextLost);
+    }
+    (containerRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
+  }, [handleContextLost]);
+
   return (
-    <div style={{ width: '100%', height: '100%', position: 'relative' }}>
-      <Canvas
-        camera={{ position: [0, 2, 8], fov: 50 }}
-        style={{ background: 'transparent' }}
-        gl={{ antialias: true, alpha: true }}
-        dpr={[1, 2]}
-      >
-        <Scene />
-      </Canvas>
+    <div ref={containerRefCallback} style={{ width: '100%', height: '100%', position: 'relative' }}>
+      <SceneErrorBoundary>
+        <Canvas
+          camera={{ position: [0, 2, 8], fov: 50 }}
+          style={{ background: 'transparent' }}
+          gl={{ antialias: true, alpha: true }}
+          dpr={[1, 2]}
+        >
+          <Scene />
+        </Canvas>
+      </SceneErrorBoundary>
     </div>
   );
 }
