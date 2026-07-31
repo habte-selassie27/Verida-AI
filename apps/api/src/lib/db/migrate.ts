@@ -6,6 +6,123 @@ import { sql } from 'drizzle-orm';
 
 import { db } from './index.js';
 
+// Idempotent column definitions for every table in schema.ts. These repair
+// tables that were created outside Drizzle tracking (before migrations were
+// introduced), where CREATE TABLE IF NOT EXISTS would silently no-op and
+// leave newer columns missing.
+const TABLE_COLUMNS: Record<string, string[]> = {
+  publishers: [
+    `"username" text`,
+    `"bio" text`,
+    `"total_datasets" integer NOT NULL DEFAULT 0`,
+    `"total_earnings" bigint NOT NULL DEFAULT 0`,
+    `"verified" boolean NOT NULL DEFAULT false`,
+    `"created_at" timestamp with time zone DEFAULT now() NOT NULL`,
+  ],
+  datasets: [
+    `"shelby_blob_id" text NOT NULL`,
+    `"name" text NOT NULL`,
+    `"description" text NOT NULL`,
+    `"tags" text[] NOT NULL`,
+    `"size_bytes" bigint NOT NULL`,
+    `"version" integer NOT NULL`,
+    `"publisher_address" text NOT NULL`,
+    `"created_at" timestamp with time zone DEFAULT now() NOT NULL`,
+    `"access_type" text NOT NULL`,
+    `"price_per_access" bigint`,
+    `"license" text NOT NULL`,
+    `"provenance_receipt" jsonb NOT NULL`,
+    `"merkle_root" text NOT NULL`,
+    `"verified" boolean`,
+    `"tampered" boolean DEFAULT false NOT NULL`,
+    `"schema_profile" jsonb`,
+    `"ai_description" text`,
+    `"suggested_tags" text[] DEFAULT '{}' NOT NULL`,
+    `"describe_status" text DEFAULT 'pending' NOT NULL`,
+    `"described_at" timestamp with time zone`,
+    `"modality" text`,
+    `"estimated_row_count" bigint`,
+    `"quality_score" real`,
+    `"quality_breakdown" jsonb`,
+    `"quality_scored_at" timestamp with time zone`,
+    `"embedding" jsonb`,
+    `"embedded_at" timestamp with time zone`,
+  ],
+  dataset_versions: [
+    `"dataset_id" integer NOT NULL`,
+    `"version" integer NOT NULL`,
+    `"shelby_blob_id" text NOT NULL`,
+    `"changelog" text`,
+    `"created_at" timestamp with time zone DEFAULT now() NOT NULL`,
+    `"merkle_root" text NOT NULL`,
+    `"size_bytes" bigint NOT NULL`,
+  ],
+  access_sessions: [
+    `"dataset_id" integer NOT NULL`,
+    `"accessor_address" text NOT NULL`,
+    `"session_id" text NOT NULL`,
+    `"created_at" timestamp with time zone DEFAULT now() NOT NULL`,
+    `"expires_at" timestamp with time zone NOT NULL`,
+    `"bytes_consumed" bigint DEFAULT 0 NOT NULL`,
+    `"status" text NOT NULL`,
+  ],
+  provenance_chain: [
+    `"dataset_id" integer NOT NULL`,
+    `"version" integer NOT NULL`,
+    `"event_type" text NOT NULL`,
+    `"actor_address" text NOT NULL`,
+    `"timestamp" timestamp with time zone DEFAULT now() NOT NULL`,
+    `"shelby_receipt" jsonb NOT NULL`,
+    `"tx_hash" text NOT NULL`,
+    `"metadata" jsonb NOT NULL`,
+  ],
+};
+
+const TABLE_INDEXES: Record<string, string[]> = {
+  datasets: [
+    `CREATE UNIQUE INDEX IF NOT EXISTS "datasets_shelby_blob_id_unique" ON "datasets" USING btree ("shelby_blob_id")`,
+    `CREATE INDEX IF NOT EXISTS "datasets_publisher_address_idx" ON "datasets" USING btree ("publisher_address")`,
+    `CREATE INDEX IF NOT EXISTS "datasets_tags_idx" ON "datasets" USING btree ("tags")`,
+    `CREATE INDEX IF NOT EXISTS "datasets_modality_idx" ON "datasets" USING btree ("modality")`,
+    `CREATE INDEX IF NOT EXISTS "datasets_quality_score_idx" ON "datasets" USING btree ("quality_score")`,
+    `CREATE INDEX IF NOT EXISTS "datasets_describe_status_idx" ON "datasets" USING btree ("describe_status")`,
+  ],
+  dataset_versions: [
+    `CREATE INDEX IF NOT EXISTS "dataset_versions_dataset_id_idx" ON "dataset_versions" USING btree ("dataset_id")`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "dataset_versions_dataset_id_version_unique" ON "dataset_versions" USING btree ("dataset_id", "version")`,
+    `CREATE INDEX IF NOT EXISTS "dataset_versions_shelby_blob_id_idx" ON "dataset_versions" USING btree ("shelby_blob_id")`,
+  ],
+  access_sessions: [
+    `CREATE UNIQUE INDEX IF NOT EXISTS "access_sessions_session_id_unique" ON "access_sessions" USING btree ("session_id")`,
+    `CREATE INDEX IF NOT EXISTS "access_sessions_dataset_id_idx" ON "access_sessions" USING btree ("dataset_id")`,
+    `CREATE INDEX IF NOT EXISTS "access_sessions_accessor_address_idx" ON "access_sessions" USING btree ("accessor_address")`,
+  ],
+  provenance_chain: [
+    `CREATE INDEX IF NOT EXISTS "provenance_chain_dataset_id_idx" ON "provenance_chain" USING btree ("dataset_id")`,
+    `CREATE INDEX IF NOT EXISTS "provenance_chain_dataset_timestamp_idx" ON "provenance_chain" USING btree ("dataset_id", "timestamp")`,
+    `CREATE INDEX IF NOT EXISTS "provenance_chain_event_type_idx" ON "provenance_chain" USING btree ("event_type")`,
+  ],
+};
+
+async function repairSchema(): Promise<void> {
+  const statements: string[] = [];
+
+  for (const [table, columns] of Object.entries(TABLE_COLUMNS)) {
+    for (const column of columns) {
+      statements.push(
+        `ALTER TABLE "${table}" ADD COLUMN IF NOT EXISTS ${column};`,
+      );
+    }
+  }
+
+  for (const indexes of Object.values(TABLE_INDEXES)) {
+    statements.push(...indexes.map((statement) => `${statement};`));
+  }
+
+  await db.execute(sql.raw(statements.join('\n')));
+  console.log('[DB] Schema repair complete.');
+}
+
 export async function runMigrations(): Promise<void> {
   const currentFileDirectory = path.dirname(fileURLToPath(import.meta.url));
   const migrationsFolder = path.resolve(currentFileDirectory, '../../../drizzle');
@@ -40,6 +157,14 @@ export async function runMigrations(): Promise<void> {
     } else {
       console.error('[DB] Migration error (non-idempotent):', cause);
     }
+  }
+
+  // Always run the idempotent repair so tables created before Drizzle
+  // tracking have every column and index the app expects.
+  try {
+    await repairSchema();
+  } catch (cause: unknown) {
+    console.error('[DB] Schema repair failed:', cause);
   }
 }
 
