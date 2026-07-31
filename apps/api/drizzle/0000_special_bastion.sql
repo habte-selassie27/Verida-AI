@@ -1,4 +1,4 @@
-CREATE TABLE "access_sessions" (
+CREATE TABLE IF NOT EXISTS "access_sessions" (
 	"id" serial PRIMARY KEY NOT NULL,
 	"dataset_id" integer NOT NULL,
 	"accessor_address" text NOT NULL,
@@ -9,7 +9,7 @@ CREATE TABLE "access_sessions" (
 	"status" text NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "dataset_versions" (
+CREATE TABLE IF NOT EXISTS "dataset_versions" (
 	"id" serial PRIMARY KEY NOT NULL,
 	"dataset_id" integer NOT NULL,
 	"version" integer NOT NULL,
@@ -20,7 +20,7 @@ CREATE TABLE "dataset_versions" (
 	"size_bytes" integer NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "datasets" (
+CREATE TABLE IF NOT EXISTS "datasets" (
 	"id" serial PRIMARY KEY NOT NULL,
 	"shelby_blob_id" text NOT NULL,
 	"name" text NOT NULL,
@@ -39,7 +39,7 @@ CREATE TABLE "datasets" (
 	"tampered" boolean DEFAULT false NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "provenance_chain" (
+CREATE TABLE IF NOT EXISTS "provenance_chain" (
 	"id" serial PRIMARY KEY NOT NULL,
 	"dataset_id" integer NOT NULL,
 	"version" integer NOT NULL,
@@ -51,7 +51,7 @@ CREATE TABLE "provenance_chain" (
 	"metadata" jsonb NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "publishers" (
+CREATE TABLE IF NOT EXISTS "publishers" (
 	"address" text PRIMARY KEY NOT NULL,
 	"username" text,
 	"bio" text,
@@ -61,19 +61,31 @@ CREATE TABLE "publishers" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-ALTER TABLE "access_sessions" ADD CONSTRAINT "access_sessions_dataset_id_datasets_id_fk" FOREIGN KEY ("dataset_id") REFERENCES "public"."datasets"("id") ON DELETE cascade ON UPDATE cascade;--> statement-breakpoint
-ALTER TABLE "dataset_versions" ADD CONSTRAINT "dataset_versions_dataset_id_datasets_id_fk" FOREIGN KEY ("dataset_id") REFERENCES "public"."datasets"("id") ON DELETE cascade ON UPDATE cascade;--> statement-breakpoint
-ALTER TABLE "datasets" ADD CONSTRAINT "datasets_publisher_address_publishers_address_fk" FOREIGN KEY ("publisher_address") REFERENCES "public"."publishers"("address") ON DELETE restrict ON UPDATE cascade;--> statement-breakpoint
-ALTER TABLE "provenance_chain" ADD CONSTRAINT "provenance_chain_dataset_id_datasets_id_fk" FOREIGN KEY ("dataset_id") REFERENCES "public"."datasets"("id") ON DELETE cascade ON UPDATE cascade;--> statement-breakpoint
-CREATE UNIQUE INDEX "access_sessions_session_id_unique" ON "access_sessions" USING btree ("session_id");--> statement-breakpoint
-CREATE INDEX "access_sessions_dataset_id_idx" ON "access_sessions" USING btree ("dataset_id");--> statement-breakpoint
-CREATE INDEX "access_sessions_accessor_address_idx" ON "access_sessions" USING btree ("accessor_address");--> statement-breakpoint
-CREATE INDEX "dataset_versions_dataset_id_idx" ON "dataset_versions" USING btree ("dataset_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "dataset_versions_dataset_id_version_unique" ON "dataset_versions" USING btree ("dataset_id","version");--> statement-breakpoint
-CREATE INDEX "dataset_versions_shelby_blob_id_idx" ON "dataset_versions" USING btree ("shelby_blob_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "datasets_shelby_blob_id_unique" ON "datasets" USING btree ("shelby_blob_id");--> statement-breakpoint
-CREATE INDEX "datasets_publisher_address_idx" ON "datasets" USING btree ("publisher_address");--> statement-breakpoint
-CREATE INDEX "datasets_tags_idx" ON "datasets" USING btree ("tags");--> statement-breakpoint
-CREATE INDEX "provenance_chain_dataset_id_idx" ON "provenance_chain" USING btree ("dataset_id");--> statement-breakpoint
-CREATE INDEX "provenance_chain_dataset_timestamp_idx" ON "provenance_chain" USING btree ("dataset_id","timestamp");--> statement-breakpoint
-CREATE INDEX "provenance_chain_event_type_idx" ON "provenance_chain" USING btree ("event_type");
+DO $$ BEGIN
+  ALTER TABLE "access_sessions" ADD CONSTRAINT "access_sessions_dataset_id_datasets_id_fk" FOREIGN KEY ("dataset_id") REFERENCES "public"."datasets"("id") ON DELETE cascade ON UPDATE cascade;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  ALTER TABLE "dataset_versions" ADD CONSTRAINT "dataset_versions_dataset_id_datasets_id_fk" FOREIGN KEY ("dataset_id") REFERENCES "public"."datasets"("id") ON DELETE cascade ON UPDATE cascade;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  ALTER TABLE "datasets" ADD CONSTRAINT "datasets_publisher_address_publishers_address_fk" FOREIGN KEY ("publisher_address") REFERENCES "public"."publishers"("address") ON DELETE restrict ON UPDATE cascade;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  ALTER TABLE "provenance_chain" ADD CONSTRAINT "provenance_chain_dataset_id_datasets_id_fk" FOREIGN KEY ("dataset_id") REFERENCES "public"."datasets"("id") ON DELETE cascade ON UPDATE cascade;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "access_sessions_session_id_unique" ON "access_sessions" USING btree ("session_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "access_sessions_dataset_id_idx" ON "access_sessions" USING btree ("dataset_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "access_sessions_accessor_address_idx" ON "access_sessions" USING btree ("accessor_address");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "dataset_versions_dataset_id_idx" ON "dataset_versions" USING btree ("dataset_id");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "dataset_versions_dataset_id_version_unique" ON "dataset_versions" USING btree ("dataset_id","version");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "dataset_versions_shelby_blob_id_idx" ON "dataset_versions" USING btree ("shelby_blob_id");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "datasets_shelby_blob_id_unique" ON "datasets" USING btree ("shelby_blob_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "datasets_publisher_address_idx" ON "datasets" USING btree ("publisher_address");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "datasets_tags_idx" ON "datasets" USING btree ("tags");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "provenance_chain_dataset_id_idx" ON "provenance_chain" USING btree ("dataset_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "provenance_chain_dataset_timestamp_idx" ON "provenance_chain" USING btree ("dataset_id","timestamp");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "provenance_chain_event_type_idx" ON "provenance_chain" USING btree ("event_type");

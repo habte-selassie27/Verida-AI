@@ -223,14 +223,15 @@ export async function uploadDataset(
       metadata.expirationMicros ??
       Math.floor((Date.now() + 1000 * 60 * 60 * 24 * 30) * 1000);
 
+    const registerArgs: Record<string, unknown> = {
+      account: uploadSigner,
+      blobName,
+      blobMerkleRoot: blobCommitments.blob_merkle_root,
+      size: String(fileSizeBytes),
+      expirationMicros: String(expirationMicros),
+    };
     const writeBlobRegistration = await runWithTransientRetries(async () => {
-      return runtime.client.coordination.registerBlob({
-        account: uploadSigner,
-        blobName,
-        blobMerkleRoot: blobCommitments.blob_merkle_root,
-        size: fileSizeBytes,
-        expirationMicros,
-      });
+      return runtime.client.coordination.registerBlob(registerArgs as any);
     });
 
     writeBlobTransactionHash = writeBlobRegistration.transaction.hash;
