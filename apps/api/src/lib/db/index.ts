@@ -6,7 +6,7 @@
 // HANDOFF TO TESTER: Verify DATABASE_URL is required and the db instance is created from the postgres.js driver.
 
 import postgres from 'postgres';
-import { drizzle } from 'drizzle-orm/postgres-js';
+import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 
 import * as schema from './schema.js';
 
@@ -20,12 +20,46 @@ function getRequiredDatabaseUrl(): string {
   return databaseUrl;
 }
 
-export const databaseUrl = getRequiredDatabaseUrl();
-export const client = postgres(databaseUrl, {
-  max: 10,
+// Lazy database initialization — only connects on first use
+let _db: PostgresJsDatabase<typeof schema> | null = null;
+let _client: ReturnType<typeof postgres> | null = null;
+
+function initDb(): PostgresJsDatabase<typeof schema> {
+  if (_db) return _db;
+
+  const databaseUrl = getRequiredDatabaseUrl();
+  _client = postgres(databaseUrl, {
+    max: 10,
+    ssl: databaseUrl.includes('neon.tech') || databaseUrl.includes('sslmode=require') ? { rejectUnauthorized: false } : undefined,
+  });
+  _db = drizzle(_client, { schema });
+  return _db;
+}
+
+// Proxy that lazily initializes the database on first access
+export const db = new Proxy({} as PostgresJsDatabase<typeof schema>, {
+  get(_target, prop, _receiver) {
+    const instance = initDb();
+    const value = Reflect.get(instance, prop, instance);
+    if (typeof value === 'function') {
+      return value.bind(instance);
+    }
+    return value;
+  },
 });
 
-export const db = drizzle(client, { schema });
+export function getDatabaseUrl(): string | null {
+  const url = process.env.DATABASE_URL;
+  return url && url.length > 0 ? url : null;
+}
+
+export async function closeDb(): Promise<void> {
+  if (_client) {
+    await _client.end({ timeout: 5 });
+    _client = null;
+    _db = null;
+  }
+}
 
 export { schema };
 export * from './schema.js';

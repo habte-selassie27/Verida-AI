@@ -1,10 +1,10 @@
 /* ─── CYBERPUNK PALETTE ───────────────────────────────────────────── */
 :root {
-  --neon-teal: #00F5D4;
+  --neon-teal: #ff007f;
   --neon-blue: #4CC9F0;
   --neon-purple: #7B61FF;
-  --neon-green: #00FF88;
-  --neon-pink: #FF006E;
+  --neon-green: #ff007f;
+  --neon-pink: #ff007f;
   --bg-deep: #050816;
   --glass-bg: rgba(255, 255, 255, 0.03);
   --glass-border: rgba(255, 255, 255, 0.06);
@@ -22,7 +22,7 @@
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(800px circle at 60% 50%, rgba(0, 245, 212, 0.04) 0%, transparent 50%),
+    radial-gradient(800px circle at 60% 50%, rgba(255, 0, 127, 0.04) 0%, transparent 50%),
     radial-gradient(600px circle at 30% 40%, rgba(123, 97, 255, 0.03) 0%, transparent 50%),
     linear-gradient(var(--grid-line) 1px, transparent 1px),
     linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
@@ -55,8 +55,8 @@
   gap: 6px;
   padding: 3px 10px;
   border-radius: var(--r-full);
-  background: rgba(0, 245, 212, 0.08);
-  border: 0.5px solid rgba(0, 245, 212, 0.25);
+  background: rgba(255, 0, 127, 0.08);
+  border: 0.5px solid rgba(255, 0, 127, 0.25);
   color: var(--neon-teal);
   font-family: var(--font-mono);
   font-size: 10px;
@@ -98,7 +98,7 @@
   color: var(--neon-teal);
   letter-spacing: -0.03em;
   line-height: 1.1;
-  text-shadow: 0 0 40px rgba(0, 245, 212, 0.3);
+  text-shadow: 0 0 40px rgba(255, 0, 127, 0.3);
 }
 
 .home-body-v2 {
@@ -212,7 +212,7 @@
   height: 8px;
   border-radius: 50%;
   background: var(--neon-teal);
-  box-shadow: 0 0 12px var(--neon-teal), 0 0 24px rgba(0, 245, 212, 0.3);
+  box-shadow: 0 0 12px var(--neon-teal), 0 0 24px rgba(255, 0, 127, 0.3);
   left: var(--x);
   top: var(--y);
   animation: fallback-pulse 3s ease-in-out infinite;
@@ -270,7 +270,7 @@
 
 .floating-card-centered:hover {
   border-color: rgba(255, 255, 255, 0.12);
-  box-shadow: 0 0 30px rgba(0, 245, 212, 0.06);
+  box-shadow: 0 0 30px rgba(255, 0, 127, 0.06);
 }
 
 .floating-card-icon {
@@ -462,7 +462,7 @@
   width: 40px;
   height: 40px;
   border-radius: var(--r-md);
-  background: rgba(0, 245, 212, 0.08);
+  background: rgba(255, 0, 127, 0.08);
   color: var(--neon-teal);
   display: flex;
   align-items: center;
@@ -516,7 +516,7 @@
 
 .home-category-card:hover {
   border-color: var(--neon-teal);
-  box-shadow: 0 0 24px rgba(0, 245, 212, 0.06);
+  box-shadow: 0 0 24px rgba(255, 0, 127, 0.06);
 }
 
 .home-category-dot {

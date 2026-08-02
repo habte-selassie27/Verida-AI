@@ -1,9 +1,11 @@
-// One-shot backfill script: re-fetches a sample from Shelby for every dataset
+// One-shot backfill script: re-fetches a sample from Shelby (or local storage) for every dataset
 // with describe_status='pending' and enqueues a describe job.
 //
 // Usage:
 //   npx tsx --env-file ../../.env src/scripts/backfill-describe.ts
 
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
 
@@ -15,11 +17,23 @@ import type { DescribeJobData } from '../ai/types.js';
 import { getShelbyRuntime, parseBlobId } from '../lib/shelby/client.js';
 
 const SAMPLE_BYTES = 1_024 * 1024; // 1 MB
+const LOCAL_BLOBS_DIR = join(process.cwd(), '.shelby-blobs');
 
 async function fetchSampleBase64(shelbyBlobId: string): Promise<string> {
-  const runtime = await getShelbyRuntime();
   const { accountAddress, blobName } = await parseBlobId(shelbyBlobId);
 
+  // Try local storage first (fast, no RPC needed)
+  const localPath = join(LOCAL_BLOBS_DIR, accountAddress, blobName);
+  try {
+    const blobData = await readFile(localPath);
+    const sample = blobData.subarray(0, SAMPLE_BYTES);
+    return sample.toString('base64');
+  } catch {
+    // Not found locally, try Shelby RPC
+  }
+
+  // Fall back to Shelby RPC
+  const runtime = await getShelbyRuntime();
   const blob = (await runtime.client.download({
     account: accountAddress,
     blobName,

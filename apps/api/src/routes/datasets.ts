@@ -43,6 +43,25 @@ const accessCountSubquery = db
   .groupBy(accessSessions.datasetId)
   .as('access_counts');
 
+const downloadCountSubquery = db
+  .select({
+    datasetId: accessSessions.datasetId,
+    downloadCount: count(accessSessions.id).as('download_count'),
+  })
+  .from(accessSessions)
+  .where(sql`${accessSessions.bytesConsumed} > 0`)
+  .groupBy(accessSessions.datasetId)
+  .as('download_counts');
+
+const uniqueAccessorsSubquery = db
+  .select({
+    datasetId: accessSessions.datasetId,
+    uniqueAccessors: count(sql`DISTINCT ${accessSessions.accessorAddress}`).as('unique_accessors'),
+  })
+  .from(accessSessions)
+  .groupBy(accessSessions.datasetId)
+  .as('unique_accessors');
+
 function escapeLikeWildcards(input: string): string {
   return input.replace(/[%_]/g, (char) => `\\${char}`);
 }
@@ -74,10 +93,12 @@ class ApiRouteError extends Error {
 interface UploadBodyInput {
   accessType: AccessType;
   blobName: string | undefined;
+  changelog: string | undefined;
   description: string;
   expirationMicros: number | undefined;
   license: string;
   name: string;
+  parentDatasetId: number | undefined;
   pricePerAccess: number | null | undefined;
   publisherAddress: string;
   tags: DatasetTag[];
@@ -109,10 +130,12 @@ const uploadBodySchema = z
   .object({
     accessType: z.nativeEnum(AccessType),
     blobName: z.string().trim().min(1).optional(),
+    changelog: z.string().trim().max(2000).optional(),
     description: z.string().trim().min(1),
     expirationMicros: z.coerce.number().int().positive().optional(),
     license: z.string().trim().min(1),
     name: z.string().trim().min(3),
+    parentDatasetId: z.coerce.number().int().positive().optional(),
     pricePerAccess: z.coerce.number().int().nonnegative().nullable().optional(),
     publisherAddress: z.string().trim().min(1),
     tags: z.array(z.nativeEnum(DatasetTag)).min(1),
@@ -272,10 +295,12 @@ function parseUploadBody(request: Request): UploadBodyInput {
       normalizeStringField(rawBody.access_type) ??
       '',
     blobName: normalizeStringField(rawBody.blobName) ?? normalizeStringField(rawBody.blob_name),
+    changelog: normalizeStringField(rawBody.changelog),
     description: normalizeStringField(rawBody.description) ?? '',
     expirationMicros: parseOptionalInteger(rawBody.expirationMicros ?? rawBody.expiration_micros),
     license: normalizeStringField(rawBody.license) ?? '',
     name: normalizeStringField(rawBody.name) ?? '',
+    parentDatasetId: parseOptionalInteger(rawBody.parentDatasetId ?? rawBody.parent_dataset_id),
     pricePerAccess: parseOptionalInteger(rawBody.pricePerAccess ?? rawBody.price_per_access),
     publisherAddress:
       normalizeStringField(rawBody.publisherAddress) ??
@@ -300,10 +325,12 @@ function parseUploadBody(request: Request): UploadBodyInput {
   return {
     accessType: parsed.data.accessType,
     blobName: parsed.data.blobName,
+    changelog: parsed.data.changelog,
     description: parsed.data.description,
     expirationMicros: parsed.data.expirationMicros,
     license: parsed.data.license,
     name: parsed.data.name,
+    parentDatasetId: parsed.data.parentDatasetId,
     pricePerAccess: parsed.data.pricePerAccess,
     publisherAddress: parsed.data.publisherAddress,
     tags: parsed.data.tags,
@@ -335,8 +362,16 @@ function createUploadMetadataFromBody(input: UploadBodyInput): UploadDatasetMeta
     metadata.blobName = input.blobName;
   }
 
+  if (input.changelog !== undefined) {
+    metadata.changelog = input.changelog;
+  }
+
   if (input.expirationMicros !== undefined) {
     metadata.expirationMicros = input.expirationMicros;
+  }
+
+  if (input.parentDatasetId !== undefined) {
+    metadata.parentDatasetId = input.parentDatasetId;
   }
 
   if (input.version !== undefined) {
@@ -630,6 +665,37 @@ datasetsRouter.post(
       });
     }
 
+    // New-version uploads: verify the caller owns the parent dataset and that it exists.
+    if (uploadBody.parentDatasetId !== undefined) {
+      const parentRows = await db
+        .select({
+          id: datasets.id,
+          publisherAddress: datasets.publisherAddress,
+        })
+        .from(datasets)
+        .where(eq(datasets.id, uploadBody.parentDatasetId))
+        .limit(1);
+      const parentDataset = parentRows.at(0);
+
+      if (parentDataset === undefined) {
+        try { await fs.promises.unlink(file.path); } catch { /* ignore */ }
+        throw new ApiRouteError({
+          code: 'DATASET_NOT_FOUND',
+          message: `Dataset ${uploadBody.parentDatasetId} was not found.`,
+          statusCode: 404,
+        });
+      }
+
+      if (parentDataset.publisherAddress.toLowerCase() !== authenticatedAddress) {
+        try { await fs.promises.unlink(file.path); } catch { /* ignore */ }
+        throw new ApiRouteError({
+          code: 'NOT_DATASET_OWNER',
+          message: 'Only the dataset owner can add a new version.',
+          statusCode: 403,
+        });
+      }
+    }
+
     const contentHash = await computeFileContentHash(file.path);
     const metadata: UploadDatasetMetadata = createUploadMetadataFromBody(uploadBody);
     metadata.sizeBytes = file.size;
@@ -764,7 +830,6 @@ datasetsRouter.get(
       })
       .from(datasets)
       .leftJoin(accessCountSubquery, eq(datasets.id, accessCountSubquery.datasetId))
-      .groupBy(datasets.id)
       .orderBy(orderByClause)
       .limit(query.limit)
       .offset(offset);
@@ -900,6 +965,8 @@ datasetsRouter.get(
     const datasetRows = await db
       .select({
         access_count: sql<number>`COALESCE(${accessCountSubquery.accessCount}, 0)`,
+        download_count: sql<number>`COALESCE(${downloadCountSubquery.downloadCount}, 0)`,
+        unique_accessors: sql<number>`COALESCE(${uniqueAccessorsSubquery.uniqueAccessors}, 0)`,
         access_type: datasets.accessType,
         ai_description: datasets.aiDescription,
         created_at: datasets.createdAt,
@@ -928,6 +995,8 @@ datasetsRouter.get(
       })
       .from(datasets)
       .leftJoin(accessCountSubquery, eq(datasets.id, accessCountSubquery.datasetId))
+      .leftJoin(downloadCountSubquery, eq(datasets.id, downloadCountSubquery.datasetId))
+      .leftJoin(uniqueAccessorsSubquery, eq(datasets.id, uniqueAccessorsSubquery.datasetId))
       .where(eq(datasets.id, datasetId))
       .limit(1);
     const datasetRecord = datasetRows.at(0);

@@ -1,0 +1,344 @@
+.oca {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 32px 24px;
+}
+
+.oca-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 32px;
+}
+
+.oca-title {
+  font-family: var(--font-sans);
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.oca-subtitle {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--text-tertiary);
+  margin: 4px 0 0;
+}
+
+.oca-explorer-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--green);
+  text-decoration: none;
+  padding: 6px 12px;
+  border: 1px solid rgba(0, 245, 212, 0.3);
+  border-radius: 8px;
+  transition: all 0.15s ease;
+}
+
+.oca-explorer-link:hover {
+  background: rgba(0, 245, 212, 0.08);
+  border-color: rgba(0, 245, 212, 0.5);
+}
+
+.oca-section {
+  margin-bottom: 32px;
+}
+
+.oca-section-title {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 16px;
+}
+
+/* ─── Contract State ────────────────────────────────── */
+.oca-state-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.oca-state-card {
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.oca-state-skeleton {
+  height: 72px;
+  animation: pulse 1.5s ease infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+.oca-state-label {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.oca-state-value {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.oca-state--active {
+  color: var(--green);
+}
+
+.oca-state--paused {
+  color: #f87171;
+}
+
+.oca-state-addr {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* ─── Modules Grid ──────────────────────────────────── */
+.oca-modules-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+.oca-module-card {
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: 14px;
+  text-decoration: none;
+  transition: all 0.15s ease;
+}
+
+.oca-module-card:hover {
+  border-color: rgba(0, 245, 212, 0.3);
+  background: rgba(0, 245, 212, 0.03);
+}
+
+.oca-module-name {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--green);
+  margin-bottom: 4px;
+}
+
+.oca-module-desc {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  margin-bottom: 6px;
+}
+
+.oca-module-addr {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
+/* ─── Transactions ──────────────────────────────────── */
+.oca-tx-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.oca-tx-count {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.oca-tx-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.oca-tx-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  transition: border-color 0.15s ease;
+}
+
+.oca-tx-row:hover {
+  border-color: var(--border-hover);
+}
+
+.oca-tx-skeleton {
+  height: 52px;
+  animation: pulse 1.5s ease infinite;
+}
+
+.oca-tx--success {
+  border-left: 3px solid rgba(0, 245, 212, 0.4);
+}
+
+.oca-tx--failed {
+  border-left: 3px solid rgba(239, 68, 68, 0.4);
+}
+
+.oca-tx-status {
+  flex-shrink: 0;
+}
+
+.oca-tx-icon--success {
+  color: var(--green);
+}
+
+.oca-tx-icon--failed {
+  color: #f87171;
+}
+
+.oca-tx-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.oca-tx-fn {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin-bottom: 2px;
+}
+
+.oca-tx-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.oca-tx-hash a {
+  color: var(--green);
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.oca-tx-hash a:hover {
+  text-decoration: underline;
+}
+
+.oca-tx-sep {
+  color: var(--text-tertiary);
+  opacity: 0.5;
+}
+
+.oca-tx-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.oca-tx-time {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.oca-tx-status-text {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.oca-tx--success .oca-tx-status-text {
+  color: var(--green);
+}
+
+.oca-tx--failed .oca-tx-status-text {
+  color: #f87171;
+}
+
+/* ─── Empty State ───────────────────────────────────── */
+.oca-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 40px 20px;
+  color: var(--text-tertiary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  text-align: center;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+}
+
+/* ─── Quick Links ───────────────────────────────────── */
+.oca-links-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.oca-link-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  text-decoration: none;
+  transition: all 0.15s ease;
+}
+
+.oca-link-card:hover {
+  border-color: rgba(0, 245, 212, 0.3);
+  color: var(--green);
+}
+
+@media (max-width: 768px) {
+  .oca-state-grid,
+  .oca-modules-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .oca-links-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .oca-header {
+    flex-direction: column;
+    gap: 12px;
+  }
+}

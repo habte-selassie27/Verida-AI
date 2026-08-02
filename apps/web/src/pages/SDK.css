@@ -1,0 +1,98 @@
+/* ─── SDK PAGE ──────────────────────────────────────────────────────── */
+.sdk-page {
+  padding: 48px 0 80px;
+}
+
+.sdk-header {
+  margin-bottom: 40px;
+}
+
+.sdk-title {
+  font-family: var(--font-display);
+  font-size: clamp(28px, 4vw, 40px);
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -1px;
+  margin: 8px 0;
+}
+
+.sdk-sub {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.sdk-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 14px;
+}
+
+.sdk-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 20px;
+  transition: border-color .2s;
+}
+
+.sdk-card:hover {
+  border-color: var(--border-h);
+}
+
+.sdk-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.sdk-card-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.sdk-card-name {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  flex: 1;
+}
+
+.sdk-card-version {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.sdk-card-install {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(0,0,0,.3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.sdk-card-install code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.sdk-copy-btn {
+  display: flex;
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 2px;
+  transition: color .2s;
+}
+
+.sdk-copy-btn:hover {
+  color: var(--text);
+}

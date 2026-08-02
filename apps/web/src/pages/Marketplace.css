@@ -276,12 +276,12 @@
 }
 
 .mp-result-query {
-  color: var(--neon-teal);
+  color: var(--pink);
   font-weight: 500;
 }
 
 .mp-result-tag {
-  color: var(--neon-blue);
+  color: var(--cyan);
   font-weight: 500;
 }
 
@@ -298,7 +298,7 @@
 }
 
 .mp-result-clear:hover {
-  color: var(--neon-teal);
+  color: var(--pink);
 }
 
 /* ─── GRID ────────────────────────────────────────────────────────── */

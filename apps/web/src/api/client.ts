@@ -7,6 +7,8 @@ import type {
   Publisher,
 } from '@verida/shared';
 
+export type { Dataset } from '@verida/shared';
+
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
 const TOKEN_KEY = 'verida_auth_token';
 
@@ -225,8 +227,61 @@ export async function uploadDataset(formData: FormData, jobId?: string): Promise
   return body.data;
 }
 
+export async function addDatasetVersion(
+  datasetId: number,
+  formData: FormData,
+  jobId?: string,
+): Promise<UploadResponse> {
+  // The upload endpoint treats parentDatasetId as a signal to attach the blob
+  // to an existing dataset as its next version instead of creating a new one.
+  formData.append('parentDatasetId', String(datasetId));
+  return uploadDataset(formData, jobId);
+}
+
 export function getStreamUrl(datasetId: number, sessionId: string): string {
   return `${API_BASE}/api/datasets/${datasetId}/stream?sessionId=${encodeURIComponent(sessionId)}`;
+}
+
+export interface EscrowEntry {
+  id: number;
+  onChainEscrowId: number | null;
+  buyerAddress: string;
+  publisherAddress: string;
+  datasetId: number | null;
+  amountOctas: number;
+  status: 'pending' | 'released' | 'disputed' | 'refunded';
+  createdAt: string;
+  resolvedAt: string | null;
+  disputeReason: string | null;
+}
+
+export async function createEscrowEntry(
+  datasetId: number,
+  amountOctas: number,
+  onChainEscrowId?: number,
+): Promise<EscrowEntry> {
+  return request<EscrowEntry>('/api/escrow/create', {
+    method: 'POST',
+    body: JSON.stringify({
+      amountOctas,
+      datasetId,
+      ...(onChainEscrowId !== undefined ? { onChainEscrowId } : {}),
+    }),
+  });
+}
+
+export async function updateEscrowStatus(
+  escrowId: number,
+  status: 'released' | 'disputed',
+  txHash?: string,
+): Promise<{ escrowId: number; onChainEscrowId: number | null; status: string; resolvedAt: string }> {
+  return request(`/api/escrow/${escrowId}/status`, {
+    method: 'POST',
+    body: JSON.stringify({
+      status,
+      ...(txHash ? { txHash } : {}),
+    }),
+  });
 }
 
 export interface StatsResponse {

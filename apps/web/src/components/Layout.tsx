@@ -6,6 +6,10 @@ import './Layout.css';
 export default function Layout() {
   return (
     <div className="layout">
+      {/* Floating orbs for ambient depth */}
+      <div className="orb orb--purple" />
+      <div className="orb orb--cyan" />
+
       <Navbar />
       <main className="main">
         <Outlet />

@@ -6,13 +6,16 @@
 // HANDOFF TO TESTER: Verify 404 behavior for missing datasets, session creation payloads, and validation response accuracy.
 
 import { eq } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import asyncHandler from 'express-async-handler';
 import { z } from 'zod';
 
-import { datasets, db } from '../lib/db/index.js';
+import { datasets, db, accessSessions } from '../lib/db/index.js';
 import { getShelbyAptosClient } from '../lib/shelby/client.js';
 import { createAccessSession, ShelbyAccessError, validateSession } from '../lib/shelby/index.js';
+import { createPaymentSession, verifyPayWithFeeTransaction } from '../lib/contracts/payment.js';
+import { checkOnChainAccess } from '../lib/contracts/access.js';
 import { getAuthenticatedAddress, requireAuth } from '../middleware/auth.js';
 import { ApiRouteError } from './datasets.js';
 
@@ -183,7 +186,29 @@ accessRouter.post(
     }
 
     try {
-      const session = await createAccessSession(dataset.shelbyBlobId, authenticatedAddress);
+      let session;
+      try {
+        session = await createAccessSession(dataset.shelbyBlobId, authenticatedAddress);
+      } catch (shelbyErr) {
+        // Shelby is unavailable — create a local session as fallback
+        if (shelbyErr instanceof ShelbyAccessError) {
+          console.warn('[Access] Shelby unavailable, creating local session:', shelbyErr.message);
+          const sessionId = randomUUID();
+          const expiresAt = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
+
+          await db.insert(accessSessions).values({
+            datasetId,
+            sessionId,
+            accessorAddress: authenticatedAddress,
+            expiresAt: new Date(expiresAt).toISOString(),
+            status: 'active',
+          });
+
+          session = { sessionId, expiresAt };
+        } else {
+          throw shelbyErr;
+        }
+      }
 
       response.status(201).json({
         data: {

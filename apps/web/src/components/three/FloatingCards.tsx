@@ -9,10 +9,10 @@ interface StatCard {
 }
 
 const CARDS: StatCard[] = [
-  { label: 'Active Datasets', value: '15,284', color: 'var(--neon-teal)', icon: '◆' },
-  { label: 'Shelby Nodes', value: '16', color: 'var(--neon-blue)', icon: '●' },
-  { label: 'Proven Uploads', value: '2.4M', color: 'var(--neon-purple)', icon: '▲' },
-  { label: 'AI Requests Today', value: '94,201', color: 'var(--neon-green)', icon: '✦' },
+  { label: 'Active Datasets', value: '15,284', color: 'var(--pink)', icon: '◆' },
+  { label: 'Shelby Nodes', value: '16', color: 'var(--cyan)', icon: '●' },
+  { label: 'Proven Uploads', value: '2.4M', color: 'var(--purple)', icon: '▲' },
+  { label: 'AI Requests Today', value: '94,201', color: 'var(--success-400)', icon: '✦' },
 ];
 
 function CountUpValue({ target }: { target: string }) {

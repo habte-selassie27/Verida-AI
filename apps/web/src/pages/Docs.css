@@ -1,0 +1,108 @@
+/* ─── DOCS PAGE ─────────────────────────────────────────────────────── */
+.docs-page {
+  padding: 48px 0 80px;
+}
+
+.docs-header {
+  margin-bottom: 48px;
+}
+
+.docs-title {
+  font-family: var(--font-display);
+  font-size: clamp(28px, 4vw, 40px);
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -1px;
+  margin: 8px 0;
+}
+
+.docs-sub {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.docs-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+}
+
+.docs-section-title {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin: 0 0 12px;
+}
+
+.docs-items {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.docs-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 16px 18px;
+  text-decoration: none;
+  transition: all .2s;
+}
+
+.docs-card:hover {
+  border-color: var(--border-h);
+  text-decoration: none;
+}
+
+.docs-card-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: rgba(255,0,127,.06);
+  border: 1px solid rgba(255,0,127,.12);
+  color: var(--pink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.docs-card-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.docs-card-label {
+  display: block;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.docs-card-desc {
+  display: block;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.docs-card-arrow {
+  color: var(--text-tertiary);
+  opacity: 0;
+  transform: translateX(-4px);
+  transition: all .2s;
+}
+
+.docs-card:hover .docs-card-arrow {
+  opacity: 1;
+  transform: translateX(0);
+}

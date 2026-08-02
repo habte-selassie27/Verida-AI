@@ -5,6 +5,7 @@ coverage
 .vite
 .env
 .env.local
+.tools/
 *.log
 .DS_Store
 .vercel

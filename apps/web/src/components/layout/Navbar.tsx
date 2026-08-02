@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
-import { List, X, Wallet } from '@phosphor-icons/react';
+import { List, X, Wallet, UploadSimple } from '@phosphor-icons/react';
 import { Button } from '../ui/Button';
 import { useAuth } from '../../context/AuthContext';
 import { useWalletContext } from '../../context/WalletContext';
@@ -15,8 +15,8 @@ function truncateAddress(addr: string): string {
 
 const mobileMenuVariants = {
   hidden: { x: '100%' },
-  visible: { x: 0, transition: { type: 'spring', stiffness: 300, damping: 30 } },
-  exit: { x: '100%', transition: { duration: 0.15, ease: [0.32, 0.72, 0, 1] } },
+  visible: { x: 0, transition: { type: 'spring' as const, stiffness: 300, damping: 30 } },
+  exit: { x: '100%', transition: { duration: 0.15, ease: [0.32, 0.72, 0, 1] as [number, number, number, number] } },
 };
 
 const overlayVariants = {
@@ -30,7 +30,7 @@ const navItemVariants = {
   visible: (i: number) => ({
     opacity: 1,
     x: 0,
-    transition: { delay: 0.08 * i, duration: 0.2, ease: [0.16, 1, 0.3, 1] },
+    transition: { delay: 0.08 * i, duration: 0.2, ease: [0.16, 1, 0.3, 1] as [number, number, number, number] },
   }),
 };
 
@@ -75,10 +75,11 @@ export function Navbar() {
   };
 
   const navLinks = [
-    { to: '/', label: 'Home', end: true },
     { to: '/marketplace', label: 'Marketplace' },
-    { to: '/upload', label: 'Upload' },
     { to: '/dashboard', label: 'Dashboard' },
+    { to: '/developers', label: 'Developers' },
+    { to: '/blog', label: 'Community' },
+    { to: '/network', label: 'Network' },
   ];
 
   return (
@@ -94,13 +95,20 @@ export function Navbar() {
 
         <nav className="navbar-center">
           {navLinks.map((link) => (
-            <NavLink key={link.to} to={link.to} end={link.end} className={linkClass}>
+            <NavLink key={link.to} to={link.to} className={linkClass}>
               {link.label}
             </NavLink>
           ))}
         </nav>
 
         <div className="navbar-right">
+          <NavLink to="/upload" className="navbar-upload-btn">
+            <UploadSimple size={14} />
+            Upload
+          </NavLink>
+
+          <div className="navbar-divider" />
+
           <div className="navbar-network-badge">
             <span className="network-dot" />
             shelbynet
@@ -131,7 +139,10 @@ export function Navbar() {
                     <NavLink to={`/publishers/${address}`} className="wallet-dropdown-item" onClick={() => setWalletDropdown(false)}>
                       View Profile
                     </NavLink>
-                    <NavLink to="/settings" className="wallet-dropdown-item" onClick={() => setWalletDropdown(false)}>
+                    <NavLink to="/dashboard" className="wallet-dropdown-item" onClick={() => setWalletDropdown(false)}>
+                      Dashboard
+                    </NavLink>
+                    <NavLink to="/dashboard/settings" className="wallet-dropdown-item" onClick={() => setWalletDropdown(false)}>
                       Settings
                     </NavLink>
                     {!isAuthenticated && (
@@ -150,9 +161,9 @@ export function Navbar() {
               </AnimatePresence>
             </div>
           ) : (
-            <Button variant="ghost" icon={<Wallet size={16} />} onClick={handleConnect}>
+            <button className="navbar-connect-btn" onClick={handleConnect}>
               Connect Wallet
-            </Button>
+            </button>
           )}
 
           <button
@@ -192,16 +203,22 @@ export function Navbar() {
               <div className="navbar-mobile-nav">
                 {navLinks.map((link, i) => (
                   <motion.div key={link.to} custom={i} variants={navItemVariants} initial="hidden" animate="visible">
-                    <NavLink to={link.to} end={link.end} className={linkClass} onClick={() => setMenuOpen(false)}>
+                    <NavLink to={link.to} className={linkClass} onClick={() => setMenuOpen(false)}>
                       {link.label}
                     </NavLink>
                   </motion.div>
                 ))}
+                <motion.div custom={navLinks.length} variants={navItemVariants} initial="hidden" animate="visible">
+                  <NavLink to="/upload" className="navbar-mobile-upload" onClick={() => setMenuOpen(false)}>
+                    <UploadSimple size={14} />
+                    Upload Dataset
+                  </NavLink>
+                </motion.div>
               </div>
               {connected && (
                 <motion.button
                   className="navbar-mobile-disconnect"
-                  custom={navLinks.length}
+                  custom={navLinks.length + 1}
                   variants={navItemVariants}
                   initial="hidden"
                   animate="visible"

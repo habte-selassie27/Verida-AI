@@ -35,13 +35,16 @@ export function Card({
     .join(' ');
 
   if (onClick) {
+    const hoverProps = hoverable
+      ? { whileHover: { y: -2, transition: { type: 'spring' as const, stiffness: 300, damping: 20 } } }
+      : {};
     return (
       <motion.div
         className={classes}
         onClick={onClick}
         role="button"
         tabIndex={0}
-        whileHover={hoverable ? { y: -2, transition: { type: 'spring', stiffness: 300, damping: 20 } } : undefined}
+        {...hoverProps}
       >
         {children}
       </motion.div>

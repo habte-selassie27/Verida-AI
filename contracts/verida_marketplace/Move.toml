@@ -1,0 +1,16 @@
+[package]
+name = "verida_marketplace"
+version = "0.1.0"
+authors = []
+
+[addresses]
+verida_marketplace = "0x141a8b5da194f039af93bdb7df81824a506fe73cade01138d2309aa7d497fddd"
+
+[dependencies.AptosFramework]
+git = "https://github.com/aptos-labs/aptos-framework.git"
+rev = "mainnet"
+subdir = "aptos-framework"
+
+[dev-addresses]
+
+[dev-dependencies]

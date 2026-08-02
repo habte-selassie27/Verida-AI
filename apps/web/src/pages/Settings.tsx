@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useState, useEffect, type FormEvent } from 'react';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Card } from '../components/ui/Card';
@@ -6,9 +6,10 @@ import { AddressDisplay } from '../components/ui/AddressDisplay';
 import { updatePublisherProfile } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useWalletContext } from '../context/WalletContext';
+import { MARKETPLACE_CONTRACT_ADDRESS, fetchResource } from '../lib/contracts';
 import './Settings.css';
 
-type Section = 'profile' | 'api-keys' | 'notifications' | 'wallet' | 'danger-zone';
+type Section = 'profile' | 'api-keys' | 'notifications' | 'wallet' | 'contract-admin' | 'danger-zone';
 
 interface ApiKey {
   name: string;
@@ -115,11 +116,20 @@ function Toggle({ checked, onChange, id }: { checked: boolean; onChange: (v: boo
   );
 }
 
+function ShieldIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+    </svg>
+  );
+}
+
 const NAV_ITEMS: { key: Section; label: string; icon: React.ReactNode }[] = [
   { key: 'profile', label: 'Profile', icon: <ProfileIcon /> },
   { key: 'api-keys', label: 'API Keys', icon: <KeyIcon /> },
   { key: 'notifications', label: 'Notifications', icon: <BellIcon /> },
   { key: 'wallet', label: 'Wallet', icon: <WalletIcon /> },
+  { key: 'contract-admin', label: 'Contract Admin', icon: <ShieldIcon /> },
   { key: 'danger-zone', label: 'Danger Zone', icon: <DangerIcon /> },
 ];
 
@@ -142,8 +152,15 @@ export default function Settings() {
   const [notifAccess, setNotifAccess] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
-  const { connected, address, networkName, disconnect, connect } = useWalletContext();
+  const { connected, address, networkName, disconnect, connect, signAndSubmitTransaction } = useWalletContext();
   const { isAuthenticated, login } = useAuth();
+
+  const [contractAdmin, setContractAdmin] = useState('');
+  const [contractTreasury, setContractTreasury] = useState('');
+  const [contractFee, setContractFee] = useState('500');
+  const [contractPaused, setContractPaused] = useState(false);
+  const [adminLoading, setAdminLoading] = useState(true);
+  const [adminAction, setAdminAction] = useState<string | null>(null);
 
   const handleSaveProfile = async (e: FormEvent) => {
     e.preventDefault();
@@ -204,6 +221,96 @@ export default function Settings() {
       await connect();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to connect wallet');
+    }
+  };
+
+  // Fetch contract admin state
+  useEffect(() => {
+    const fetchContractState = async () => {
+      setAdminLoading(true);
+      try {
+        const resourceType = `${MARKETPLACE_CONTRACT_ADDRESS}::verida_marketplace::MarketplaceConfig`;
+        const config = await fetchResource<{
+          admin: string;
+          treasury: string;
+          fee_basis_points: string;
+          paused: boolean;
+        }>(resourceType);
+        setContractAdmin(config.admin);
+        setContractTreasury(config.treasury);
+        setContractFee(config.fee_basis_points);
+        setContractPaused(config.paused);
+      } catch {
+        // Failed to fetch
+      } finally {
+        setAdminLoading(false);
+      }
+    };
+    fetchContractState();
+  }, []);
+
+  const handleSetFee = async () => {
+    if (!connected) return;
+    const bps = parseInt(contractFee, 10);
+    if (isNaN(bps) || bps < 0 || bps > 1000) {
+      alert('Fee must be between 0 and 1000 basis points (0-10%)');
+      return;
+    }
+    setAdminAction('fee');
+    try {
+      await signAndSubmitTransaction({
+        data: {
+          function: `${MARKETPLACE_CONTRACT_ADDRESS}::verida_marketplace::set_fee`,
+          functionArguments: [bps],
+        },
+      });
+      alert('Fee updated on-chain');
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to set fee');
+    } finally {
+      setAdminAction(null);
+    }
+  };
+
+  const handleSetTreasury = async () => {
+    if (!connected || !contractTreasury.startsWith('0x')) {
+      alert('Enter a valid treasury address');
+      return;
+    }
+    setAdminAction('treasury');
+    try {
+      await signAndSubmitTransaction({
+        data: {
+          function: `${MARKETPLACE_CONTRACT_ADDRESS}::verida_marketplace::set_treasury`,
+          functionArguments: [contractTreasury],
+        },
+      });
+      alert('Treasury updated on-chain');
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to set treasury');
+    } finally {
+      setAdminAction(null);
+    }
+  };
+
+  const handlePause = async () => {
+    if (!connected) return;
+    setAdminAction('pause');
+    try {
+      await signAndSubmitTransaction({
+        data: {
+          function: contractPaused
+            ? `${MARKETPLACE_CONTRACT_ADDRESS}::verida_marketplace::unpause`
+            : `${MARKETPLACE_CONTRACT_ADDRESS}::verida_marketplace::pause`,
+          functionArguments: [],
+        },
+      });
+      setContractPaused(!contractPaused);
+      alert(contractPaused ? 'Contract unpaused' : 'Contract paused');
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to toggle pause');
+    } finally {
+      setAdminAction(null);
     }
   };
 
@@ -382,6 +489,94 @@ export default function Settings() {
                 <Button onClick={handleConnectWallet}>Connect Wallet</Button>
               )}
             </div>
+          </div>
+        )}
+
+        {/* ── Contract Admin ─────────────────────── */}
+        {activeSection === 'contract-admin' && (
+          <div>
+            <h2 className="settings-heading">Contract Admin</h2>
+            <p className="settings-desc">
+              Manage on-chain marketplace parameters. Only the contract admin can execute these changes.
+            </p>
+
+            {adminLoading ? (
+              <Card className="settings-wallet-card">
+                <span style={{ color: 'var(--text-tertiary)', fontSize: 13 }}>Loading contract state…</span>
+              </Card>
+            ) : (
+              <>
+                {/* Fee */}
+                <Card className="settings-wallet-card">
+                  <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>Marketplace Fee</h3>
+                  <div className="settings-wallet-row">
+                    <span className="settings-wallet-label">Current Fee</span>
+                    <span className="settings-wallet-network">{Number(contractFee) / 100}% ({contractFee} bps)</span>
+                  </div>
+                  <div className="settings-wallet-row" style={{ alignItems: 'flex-end', gap: 12 }}>
+                    <Input
+                      label="New Fee (basis points)"
+                      value={contractFee}
+                      onChange={(e) => setContractFee(e.target.value)}
+                      style={{ flex: 1 }}
+                    />
+                    <Button onClick={handleSetFee} disabled={!connected || !!adminAction}>
+                      {adminAction === 'fee' ? 'Saving…' : 'Update Fee'}
+                    </Button>
+                  </div>
+                </Card>
+
+                {/* Treasury */}
+                <Card className="settings-wallet-card">
+                  <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>Treasury Address</h3>
+                  <div className="settings-wallet-row">
+                    <span className="settings-wallet-label">Current Treasury</span>
+                    {contractTreasury ? (
+                      <AddressDisplay value={contractTreasury} />
+                    ) : (
+                      <span style={{ color: 'var(--text-tertiary)', fontSize: 13 }}>Not set</span>
+                    )}
+                  </div>
+                  <div className="settings-wallet-row" style={{ alignItems: 'flex-end', gap: 12 }}>
+                    <Input
+                      label="New Treasury Address"
+                      value={contractTreasury}
+                      onChange={(e) => setContractTreasury(e.target.value)}
+                      placeholder="0x..."
+                      style={{ flex: 1 }}
+                    />
+                    <Button onClick={handleSetTreasury} disabled={!connected || !!adminAction}>
+                      {adminAction === 'treasury' ? 'Saving…' : 'Update Treasury'}
+                    </Button>
+                  </div>
+                </Card>
+
+                {/* Pause */}
+                <Card className="settings-wallet-card">
+                  <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>Contract Pause</h3>
+                  <div className="settings-wallet-row">
+                    <span className="settings-wallet-label">Status</span>
+                    <span className="settings-wallet-status">
+                      <span className="settings-status-dot" style={{ background: contractPaused ? 'var(--red-400)' : 'var(--teal-400)' }} />
+                      {contractPaused ? 'Paused' : 'Active'}
+                    </span>
+                  </div>
+                  <div className="settings-submit-row" style={{ marginTop: 12 }}>
+                    <Button
+                      variant={contractPaused ? 'ghost' : 'danger'}
+                      onClick={handlePause}
+                      disabled={!connected || !!adminAction}
+                    >
+                      {adminAction === 'pause'
+                        ? 'Processing…'
+                        : contractPaused
+                          ? 'Unpause Contract'
+                          : 'Pause Contract'}
+                    </Button>
+                  </div>
+                </Card>
+              </>
+            )}
           </div>
         )}
 

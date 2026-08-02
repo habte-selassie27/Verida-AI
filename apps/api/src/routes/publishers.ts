@@ -5,12 +5,12 @@
 // DB TABLES: publishers, datasets
 // HANDOFF TO TESTER: Verify address validation, auth-gated profile updates, and returned dataset lists per publisher.
 
-import { desc, eq } from 'drizzle-orm';
+import { desc, eq, sql, and, gte } from 'drizzle-orm';
 import { Router, type Request, type Response } from 'express';
 import asyncHandler from 'express-async-handler';
 import { z } from 'zod';
 
-import { db, datasets, publishers } from '../lib/db/index.js';
+import { db, datasets, publishers, accessSessions } from '../lib/db/index.js';
 import { getAuthenticatedAddress, requireAuth } from '../middleware/auth.js';
 import { ApiRouteError } from './datasets.js';
 
@@ -180,5 +180,120 @@ publishersRouter.put(
     });
   }),
 );
+
+publishersRouter.get(
+  '/publishers/:address/revenue',
+  requireAuth,
+  asyncHandler(async (request: Request, response: Response): Promise<void> => {
+    const address = getAuthenticatedAddress(request);
+
+    // Get all datasets by this publisher
+    const publisherDatasets = await db
+      .select({ id: datasets.id, name: datasets.name, price_per_access: datasets.pricePerAccess })
+      .from(datasets)
+      .where(eq(datasets.publisherAddress, address));
+
+    if (publisherDatasets.length === 0) {
+      response.json({
+        data: {
+          totalRevenue: 0,
+          thisMonthRevenue: 0,
+          totalDownloads: 0,
+          monthlyRevenue: [],
+          recentTransactions: [],
+        },
+        success: true,
+      });
+      return;
+    }
+
+    const datasetIds = publisherDatasets.map((d) => d.id);
+    const datasetMap = new Map(publisherDatasets.map((d) => [d.id, d]));
+
+    // Get access sessions for publisher's datasets
+    const sessions = await db
+      .select({
+        id: accessSessions.id,
+        dataset_id: accessSessions.datasetId,
+        accessor_address: accessSessions.accessorAddress,
+        created_at: accessSessions.createdAt,
+        bytes_consumed: accessSessions.bytesConsumed,
+        status: accessSessions.status,
+      })
+      .from(accessSessions)
+      .where(sql`${accessSessions.datasetId} IN ${datasetIds}`)
+      .orderBy(desc(accessSessions.createdAt));
+
+    // Calculate total revenue
+    let totalRevenue = 0;
+    let thisMonthRevenue = 0;
+    const now = new Date();
+    const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    for (const session of sessions) {
+      const ds = datasetMap.get(session.dataset_id);
+      if (ds?.price_per_access) {
+        totalRevenue += ds.price_per_access / 100_000_000; // Convert octas to APT
+        if (new Date(session.created_at) >= thisMonthStart) {
+          thisMonthRevenue += ds.price_per_access / 100_000_000;
+        }
+      }
+    }
+
+    // Calculate monthly revenue (last 6 months)
+    const monthlyRevenue: { month: string; amount: number }[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const monthDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const monthEnd = new Date(now.getFullYear(), now.getMonth() - i + 1, 0);
+      const monthLabel = monthDate.toLocaleString('en-US', { month: 'short' });
+      
+      let monthTotal = 0;
+      for (const session of sessions) {
+        const sessionDate = new Date(session.created_at);
+        if (sessionDate >= monthDate && sessionDate <= monthEnd) {
+          const ds = datasetMap.get(session.dataset_id);
+          if (ds?.price_per_access) {
+            monthTotal += ds.price_per_access / 100_000_000;
+          }
+        }
+      }
+      monthlyRevenue.push({ month: monthLabel, amount: Math.round(monthTotal * 10) / 10 });
+    }
+
+    // Get recent transactions
+    const recentTransactions = sessions.slice(0, 10).map((session) => {
+      const ds = datasetMap.get(session.dataset_id);
+      return {
+        dataset: ds?.name ?? 'Unknown',
+        buyer: `${session.accessor_address.slice(0, 6)}...${session.accessor_address.slice(-4)}`,
+        amount: ds?.price_per_access ? `${(ds.price_per_access / 100_000_000).toFixed(1)} APT` : 'Free',
+        time: formatTimeAgo(session.created_at),
+      };
+    });
+
+    response.json({
+      data: {
+        totalRevenue: Math.round(totalRevenue * 10) / 10,
+        thisMonthRevenue: Math.round(thisMonthRevenue * 10) / 10,
+        totalDownloads: sessions.length,
+        monthlyRevenue,
+        recentTransactions,
+      },
+      success: true,
+    });
+  }),
+);
+
+function formatTimeAgo(dateStr: string): string {
+  const now = Date.now();
+  const then = new Date(dateStr).getTime();
+  const diff = now - then;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
+}
 
 export { publishersRouter };

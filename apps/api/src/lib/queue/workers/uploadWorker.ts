@@ -7,6 +7,7 @@
 
 import fs from 'node:fs/promises';
 
+import { eq } from 'drizzle-orm';
 import { Worker } from 'bullmq';
 import { AccessType, type Dataset } from '@verida/shared';
 
@@ -123,6 +124,10 @@ async function persistUploadedDataset(
   uploadResult: Awaited<ReturnType<typeof uploadDataset>>,
   jobId: string,
 ): Promise<Dataset> {
+  if (jobData.metadata.parentDatasetId !== undefined) {
+    return await persistNewVersion(jobData, uploadResult, jobId, jobData.metadata.parentDatasetId);
+  }
+
   const datasetVersion = jobData.metadata.version ?? 1;
   const uploadedAtIso = new Date(uploadResult.receipt.uploadedAt).toISOString();
 
@@ -210,6 +215,108 @@ async function persistUploadedDataset(
     });
 
     return dataset;
+  });
+}
+
+async function persistNewVersion(
+  jobData: UploadDatasetJobData,
+  uploadResult: Awaited<ReturnType<typeof uploadDataset>>,
+  jobId: string,
+  parentDatasetId: number,
+): Promise<Dataset> {
+  const uploadedAtIso = new Date(uploadResult.receipt.uploadedAt).toISOString();
+
+  return await db.transaction(async (tx) => {
+    // Lock the parent row so concurrent version uploads can't both read the
+    // same version and collide on the (dataset_id, version) unique constraint.
+    const parentRows = await tx
+      .select({
+        id: datasets.id,
+        publisherAddress: datasets.publisherAddress,
+        version: datasets.version,
+      })
+      .from(datasets)
+      .where(eq(datasets.id, parentDatasetId))
+      .limit(1)
+      .for('update');
+    const parentDataset = parentRows.at(0);
+
+    if (parentDataset === undefined) {
+      throw new UploadWorkerError(`Parent dataset ${parentDatasetId} was not found for version upload.`);
+    }
+
+    if (parentDataset.publisherAddress.toLowerCase() !== jobData.publisherAddress.toLowerCase()) {
+      throw new UploadWorkerError('Only the dataset owner can add a new version.');
+    }
+
+    const nextVersion = parentDataset.version + 1;
+
+    await tx.insert(datasetVersions).values({
+      changelog: jobData.metadata.changelog ?? null,
+      datasetId: parentDataset.id,
+      merkleRoot: uploadResult.merkleRoot,
+      shelbyBlobId: uploadResult.blobId,
+      sizeBytes: uploadResult.receipt.size,
+      version: nextVersion,
+    });
+
+    const updatedRows = await tx
+      .update(datasets)
+      .set({
+        merkleRoot: uploadResult.merkleRoot,
+        provenanceReceipt: uploadResult.receipt,
+        shelbyBlobId: uploadResult.blobId,
+        sizeBytes: uploadResult.receipt.size,
+        tampered: false,
+        verified: false,
+        version: nextVersion,
+      })
+      .where(eq(datasets.id, parentDataset.id))
+      .returning({
+        access_type: datasets.accessType,
+        created_at: datasets.createdAt,
+        description: datasets.description,
+        id: datasets.id,
+        license: datasets.license,
+        merkle_root: datasets.merkleRoot,
+        name: datasets.name,
+        price_per_access: datasets.pricePerAccess,
+        provenance_receipt: datasets.provenanceReceipt,
+        publisher_address: datasets.publisherAddress,
+        shelby_blob_id: datasets.shelbyBlobId,
+        size_bytes: datasets.sizeBytes,
+        tags: datasets.tags,
+        tampered: datasets.tampered,
+        verified: datasets.verified,
+        version: datasets.version,
+      });
+
+    const updatedDataset = updatedRows.at(0);
+
+    if (updatedDataset === undefined) {
+      throw new UploadWorkerError('Version upload did not return the updated dataset row.');
+    }
+
+    await tx.insert(provenanceChain).values({
+      actorAddress: jobData.publisherAddress,
+      datasetId: parentDataset.id,
+      eventType: 'VERSION_ADDED',
+      metadata: {
+        changelog: jobData.metadata.changelog ?? null,
+        contentHash: jobData.contentHash,
+        jobId,
+        metadata: jobData.metadata,
+      },
+      shelbyReceipt: uploadResult.receipt,
+      timestamp: uploadedAtIso,
+      txHash: uploadResult.receipt.txHash,
+      version: nextVersion,
+    });
+
+    // The returned row omits the nullable AI-enrichment columns (they live on
+    // the parent row and are re-populated by the describe worker). Cast to the
+    // full Dataset type for downstream consumers (emitUploadComplete, fan-out).
+    return updatedDataset as unknown as Dataset;
   });
 }
 

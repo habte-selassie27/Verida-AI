@@ -9,6 +9,7 @@ import { eq } from 'drizzle-orm';
 
 import { QualityQueue } from '../queue.js';
 import type { QualityJobData } from '../types.js';
+import type { SchemaProfile } from '@verida/shared';
 import { scoreQuality } from '../pipelines/quality.js';
 import { AI_CONFIG } from '../config/ai.config.js';
 
@@ -18,20 +19,24 @@ export const qualityWorker = new Worker<QualityJobData>(
     const { datasetId } = job.data;
 
     const row = await db
-      .select({ schemaProfile: datasets.schemaProfile, describeStatus: datasets.describeStatus })
+      .select({ schemaProfile: datasets.schemaProfile, describeStatus: datasets.describeStatus, modality: datasets.modality })
       .from(datasets)
       .where(eq(datasets.id, datasetId))
       .limit(1)
       .then((r) => r[0]);
 
     if (!row) throw new Error(`Dataset ${datasetId} not found`);
-    if (!row.schemaProfile) {
-      await QualityQueue.add('quality', { datasetId }, { delay: 15_000 });
-      return { skipped: true, reason: 'schema_not_ready' };
-    }
+
+    // For non-tabular data (images, PDFs, etc.), construct a minimal schemaProfile
+    // from the dataset's modality so scoreQuality can still produce a meaningful score.
+    // Only skip if describe hasn't completed yet (schema might still be generating).
+    const effectiveProfile = row.schemaProfile ?? {
+      modality: (row.modality ?? 'other') as SchemaProfile['modality'],
+      format: 'unknown',
+    };
 
     const { breakdown, score } = AI_CONFIG.qualityEnabled
-      ? scoreQuality(row.schemaProfile)
+      ? scoreQuality(effectiveProfile)
       : { breakdown: null, score: 0 };
 
     await db

@@ -2,9 +2,38 @@
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  position: relative;
 }
 
 .main {
   flex: 1;
-  padding-top: var(--sp-6);
+  padding-top: 64px;
+  position: relative;
+  z-index: 1;
+}
+
+/* ─── FLOATING ORBS ──────────────────────────────────────────────────── */
+.orb {
+  position: fixed;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.orb--purple {
+  width: 450px;
+  height: 450px;
+  top: 30%;
+  right: -100px;
+  background: rgba(139,92,246,.06);
+  filter: blur(160px);
+}
+
+.orb--cyan {
+  width: 380px;
+  height: 380px;
+  bottom: 10%;
+  left: 20%;
+  background: rgba(0,229,255,.05);
+  filter: blur(160px);
 }

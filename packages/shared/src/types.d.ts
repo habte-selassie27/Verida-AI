@@ -58,6 +58,9 @@ export interface Dataset {
     merkle_root: string;
     verified: boolean | null;
     tampered: boolean;
+    access_count: number;
+    download_count: number;
+    unique_accessors: number;
 }
 export interface DatasetVersion {
     id: number;

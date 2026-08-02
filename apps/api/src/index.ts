@@ -17,7 +17,7 @@ import { z } from 'zod';
 
 import { eq, sql } from 'drizzle-orm';
 
-import { client as dbClient, db } from './lib/db/index.js';
+import { closeDb, db } from './lib/db/index.js';
 import { accessSessions, datasets } from './lib/db/schema.js';
 import { runMigrations } from './lib/db/migrate.js';
 import { isShelbyAvailable } from './lib/shelby/client.js';
@@ -33,8 +33,10 @@ import { closeRateLimitRedisClient, generalRateLimit } from './middleware/rateLi
 import { accessRouter } from './routes/access.js';
 import { authRouter } from './routes/auth.js';
 import { ApiRouteError, datasetsRouter } from './routes/datasets.js';
+import { escrowRouter } from './routes/escrow.js';
 import { publishersRouter } from './routes/publishers.js';
 import { createUploadProgressWebSocketServer } from './routes/wsUploadProgress.js';
+import { getEscrowKeeperStats, startEscrowKeeper, type EscrowKeeperHandle } from './lib/contracts/escrowKeeper.js';
 
 const app = express();
 
@@ -43,6 +45,14 @@ void VerifyWorker;
 void describeWorker;
 void embedWorker;
 void qualityWorker;
+
+// Escrow auto-release keeper (starts in startServer, stopped on shutdown).
+let escrowKeeper: EscrowKeeperHandle | null = null;
+
+function getEscrowKeeperIntervalMs(): number {
+  const parsed = Number.parseInt(process.env.ESCROW_KEEPER_INTERVAL_MS ?? '3600000', 10);
+  return Number.isFinite(parsed) && parsed >= 60_000 ? parsed : 3_600_000;
+}
 
 function getServerPort(): number {
   const parsed = Number.parseInt(process.env.PORT ?? '4000', 10);
@@ -127,6 +137,14 @@ app.get('/api/stats/live', asyncHandler(async (_request: Request, response: Resp
     },
     success: true,
   });
+}));
+
+// Escrow auto-release keeper observability — reports last sweep, released/
+// failed counts, and the most recent error so operators can tell at a glance
+// whether auto-release is healthy (registered before the rate limiter, like
+// /api/stats/live).
+app.get('/api/keeper/status', asyncHandler(async (_request: Request, response: Response): Promise<void> => {
+  response.json({ data: getEscrowKeeperStats(), success: true });
 }));
 
 app.use('/api', generalRateLimit);
@@ -225,10 +243,11 @@ app.get('/api/price/apt', asyncHandler(async (_request: Request, response: Respo
   response.json({ data: { price, currency: 'USD', source }, success: true });
 }));
 
-app.use('/api/auth', authRouter);
-app.use('/api/datasets', datasetsRouter);
-app.use('/api', accessRouter);
-app.use('/api', publishersRouter);
+  app.use('/api/auth', authRouter);
+  app.use('/api/datasets', datasetsRouter);
+  app.use('/api', accessRouter);
+  app.use('/api', escrowRouter);
+  app.use('/api', publishersRouter);
 
 app.use((_request: Request, response: Response): void => {
   response.status(404).json({
@@ -269,7 +288,9 @@ const errorHandler: ErrorRequestHandler = (error, _request, response, _next): vo
   }
 
   const safeMessage = isProductionEnvironment()
-    ? 'Internal server error.'
+    ? (error instanceof Error && error.message.includes('environment variable'))
+      ? error.message
+      : 'Internal server error.'
     : error instanceof Error
       ? error.message
       : 'Internal server error.';
@@ -294,6 +315,9 @@ async function shutdown(server?: ReturnType<typeof app.listen>): Promise<void> {
     });
   }
 
+  await escrowKeeper?.stop();
+  escrowKeeper = null;
+
   await Promise.all([
     closeUploadWorker(),
     closeVerifyWorker(),
@@ -306,9 +330,7 @@ async function shutdown(server?: ReturnType<typeof app.listen>): Promise<void> {
     closeRateLimitRedisClient(),
   ]);
 
-  await dbClient.end({
-    timeout: 5,
-  });
+  await closeDb();
 }
 
 async function startServer(): Promise<void> {
@@ -324,6 +346,9 @@ async function startServer(): Promise<void> {
 
   const httpServer = createServer(app);
   createUploadProgressWebSocketServer(httpServer);
+
+  // Start the escrow auto-release keeper (env-gated, default on).
+  escrowKeeper = startEscrowKeeper(getEscrowKeeperIntervalMs());
 
   httpServer.listen(port, (): void => {
     console.log(`Verida API listening on http://localhost:${port}`);

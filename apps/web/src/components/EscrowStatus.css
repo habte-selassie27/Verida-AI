@@ -1,0 +1,120 @@
+.escrow-status {
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 16px;
+  margin-top: 12px;
+}
+
+.escrow-status--pending {
+  border-color: rgba(245, 158, 11, 0.3);
+}
+
+.escrow-status--released {
+  border-color: rgba(0, 245, 212, 0.3);
+}
+
+.escrow-status--disputed {
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.escrow-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.escrow-icon {
+  font-size: 16px;
+}
+
+.escrow-title {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.escrow-countdown {
+  text-align: center;
+  padding: 12px 0;
+}
+
+.escrow-timer {
+  font-family: var(--font-mono);
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.escrow-timer--urgent {
+  color: #f87171;
+}
+
+.escrow-timer--warning {
+  color: #fbbf24;
+}
+
+.escrow-expired-label {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  color: var(--green);
+  font-weight: 600;
+}
+
+.escrow-countdown-label {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.escrow-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.escrow-status-badge {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 8px 12px;
+  border-radius: 8px;
+  text-align: center;
+  margin-top: 8px;
+}
+
+.escrow-status-badge--released {
+  background: rgba(0, 245, 212, 0.1);
+  color: #00d4c8;
+}
+
+.escrow-status-badge--disputed {
+  background: rgba(239, 68, 68, 0.1);
+  color: #f87171;
+}
+
+.escrow-status-badge--refunded {
+  background: rgba(139, 92, 246, 0.1);
+  color: #a5b4fc;
+}
+
+.escrow-note {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-tertiary);
+  background: var(--bg-raised);
+  border: 0.5px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-top: 12px;
+}
+
+.escrow-note--error {
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.25);
+  background: rgba(239, 68, 68, 0.06);
+}

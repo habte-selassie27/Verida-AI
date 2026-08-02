@@ -26,5 +26,40 @@ services:
         sync: false
       - key: APTOS_NODE_URL
         sync: false
+      # The dedicated verida-keeper worker below owns the auto-release sweep —
+      # keep the web service from also running it (only one runner at a time).
+      - key: ESCROW_KEEPER_ENABLED
+        value: 'false'
     healthCheckPath: /healthz
+    autoDeploy: true
+
+  # Escrow auto-release keeper — long-running background worker that runs the
+  # one-shot sweep on a loop, sleeping ESCROW_KEEPER_INTERVAL_MS between passes.
+  # (Render has no native cron on the free plan; a while-true worker is the
+  # standard pattern. Swap in a cron job if you move to a paid plan.)
+  - type: worker
+    name: verida-keeper
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build --workspace=@verida/shared && npm run build --workspace=@verida/api
+    startCommand: |
+      cd apps/api && while true; do
+        node dist/scripts/escrow-keeper-run.js || true
+        sleep $(( ${ESCROW_KEEPER_INTERVAL_MS:-3600000} / 1000 ))
+      done
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: SHELBY_SIGNER_PRIVATE_KEY
+        sync: false
+      - key: APTOS_NODE_URL
+        sync: false
+      - key: APTOS_NETWORK
+        value: testnet
+      - key: MARKETPLACE_CONTRACT_ADDRESS
+        sync: false
+      - key: ESCROW_KEEPER_INTERVAL_MS
+        sync: false
     autoDeploy: true

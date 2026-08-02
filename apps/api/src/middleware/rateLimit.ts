@@ -5,36 +5,15 @@
 // DB TABLES: None directly; rate limiting is stored in Redis.
 // HANDOFF TO TESTER: Verify each limiter threshold, Redis key partitioning, and 429 response payload shape.
 
-import type { Request } from 'express';
-import { ipKeyGenerator, rateLimit, type RateLimitRequestHandler } from 'express-rate-limit';
-import IORedis from 'ioredis';
-import { RedisStore, type RedisReply } from 'rate-limit-redis';
-
-interface RateLimitConfig {
-  keyGenerator?: (request: Request) => string;
-  limit: number;
-  message: string;
-  prefix: string;
-  windowMs: number;
-}
+import type { Request, Response, NextFunction } from 'express';
+import { ipKeyGenerator } from 'express-rate-limit';
 
 const SESSION_HEADER_NAME = 'x-session-id';
 
-function getRequiredRedisUrl(): string {
+function getRedisUrl(): string | null {
   const redisUrl = process.env.REDIS_URL?.trim() ?? '';
-
-  if (redisUrl.length === 0) {
-    throw new Error('REDIS_URL is required to configure API rate limit middleware.');
-  }
-
-  return redisUrl;
+  return redisUrl.length > 0 ? redisUrl : null;
 }
-
-const redisRateLimitClient = new IORedis(getRequiredRedisUrl(), {
-  enableReadyCheck: false,
-  lazyConnect: true,
-  maxRetriesPerRequest: null,
-});
 
 function defaultIpKeyGenerator(request: Request): string {
   const requestIp = typeof request.ip === 'string' ? request.ip : '';
@@ -52,63 +31,144 @@ function sessionScopedKeyGenerator(request: Request): string {
   return `ip:${defaultIpKeyGenerator(request)}`;
 }
 
-function createLimiter(config: RateLimitConfig): RateLimitRequestHandler {
-  return rateLimit({
-    handler: (_request, response): void => {
-      response.status(429).json({
-        error: {
-          code: 'RATE_LIMITED',
-          error: config.message,
+// ── Lazy Redis-backed rate limiters ────────────────────────────────────
+// Only initialize Redis when the first request arrives. If Redis is
+// unavailable, fall back to a pass-through middleware so the app still
+// works (without rate limiting) instead of crashing at import time.
+
+let redisAvailable: boolean | null = null; // null = not checked yet
+let generalRateLimitFn: ((req: Request, res: Response, next: NextFunction) => void) | null = null;
+let uploadRateLimitFn: ((req: Request, res: Response, next: NextFunction) => void) | null = null;
+let streamRateLimitFn: ((req: Request, res: Response, next: NextFunction) => void) | null = null;
+let redisClient: import('ioredis').default | null = null;
+
+function passThrough(_req: Request, _res: Response, next: NextFunction): void {
+  next();
+}
+
+async function tryInitRedis(): Promise<boolean> {
+  if (redisAvailable !== null) return redisAvailable;
+
+  const redisUrl = getRedisUrl();
+  if (!redisUrl) {
+    console.warn('[RateLimit] REDIS_URL not set — rate limiting disabled.');
+    redisAvailable = false;
+    return false;
+  }
+
+  try {
+    const { default: IORedis } = await import('ioredis');
+    const { RedisStore } = await import('rate-limit-redis');
+    const { rateLimit } = await import('express-rate-limit');
+
+    const client = new IORedis(redisUrl, {
+      enableReadyCheck: false,
+      lazyConnect: true,
+      maxRetriesPerRequest: null,
+    });
+
+    redisClient = client;
+    redisAvailable = true;
+
+    function createLimiter(config: {
+      limit: number;
+      message: string;
+      prefix: string;
+      windowMs: number;
+      keyGenerator?: (request: Request) => string;
+    }) {
+      return rateLimit({
+        handler: (_request: Request, response: Response): void => {
+          response.status(429).json({
+            error: { code: 'RATE_LIMITED', error: config.message },
+            success: false,
+          });
         },
-        success: false,
+        keyGenerator: config.keyGenerator ?? defaultIpKeyGenerator,
+        legacyHeaders: false,
+        limit: config.limit,
+        standardHeaders: 'draft-8',
+        store: new RedisStore({
+          prefix: config.prefix,
+          sendCommand: (...args: string[]) => {
+            const command = args[0] ?? 'PING';
+            return client.call(command, ...args.slice(1)) as Promise<import('rate-limit-redis').RedisReply>;
+          },
+        }),
+        windowMs: config.windowMs,
       });
-    },
-    keyGenerator: config.keyGenerator ?? defaultIpKeyGenerator,
-    legacyHeaders: false,
-    limit: config.limit,
-    standardHeaders: 'draft-8',
-    store: new RedisStore({
-      prefix: config.prefix,
-      sendCommand: (...args: string[]): Promise<RedisReply> => {
-        const command = args[0] ?? 'PING';
-        const commandArguments = args.slice(1);
-        return redisRateLimitClient.call(command, ...commandArguments) as Promise<RedisReply>;
-      },
-    }),
-    windowMs: config.windowMs,
+    }
+
+    generalRateLimitFn = createLimiter({
+      limit: 200,
+      message: 'Too many API requests from this IP. Please retry in a few minutes.',
+      prefix: 'verida:rate-limit:general:',
+      windowMs: 15 * 60 * 1000,
+    });
+
+    uploadRateLimitFn = createLimiter({
+      limit: 10,
+      message: 'Upload rate limit exceeded for this IP. Please retry in one hour.',
+      prefix: 'verida:rate-limit:upload:',
+      windowMs: 60 * 60 * 1000,
+    });
+
+    streamRateLimitFn = createLimiter({
+      keyGenerator: sessionScopedKeyGenerator,
+      limit: 100,
+      message: 'Stream rate limit exceeded for this session. Please retry later.',
+      prefix: 'verida:rate-limit:stream:',
+      windowMs: 60 * 60 * 1000,
+    });
+
+    console.log('[RateLimit] Redis connected — rate limiting enabled.');
+    return true;
+  } catch (err) {
+    console.warn('[RateLimit] Redis unavailable — rate limiting disabled:', err instanceof Error ? err.message : err);
+    redisAvailable = false;
+    return false;
+  }
+}
+
+// Middleware wrappers that lazily initialize Redis on first request
+export function generalRateLimit(req: Request, res: Response, next: NextFunction): void {
+  void tryInitRedis().then((ok) => {
+    if (ok && generalRateLimitFn) {
+      generalRateLimitFn(req, res, next);
+    } else {
+      passThrough(req, res, next);
+    }
   });
 }
 
-export const generalRateLimit = createLimiter({
-  limit: 200,
-  message: 'Too many API requests from this IP. Please retry in a few minutes.',
-  prefix: 'verida:rate-limit:general:',
-  windowMs: 15 * 60 * 1000,
-});
+export function uploadRateLimit(req: Request, res: Response, next: NextFunction): void {
+  void tryInitRedis().then((ok) => {
+    if (ok && uploadRateLimitFn) {
+      uploadRateLimitFn(req, res, next);
+    } else {
+      passThrough(req, res, next);
+    }
+  });
+}
 
-export const uploadRateLimit = createLimiter({
-  limit: 10,
-  message: 'Upload rate limit exceeded for this IP. Please retry in one hour.',
-  prefix: 'verida:rate-limit:upload:',
-  windowMs: 60 * 60 * 1000,
-});
-
-export const streamRateLimit = createLimiter({
-  keyGenerator: sessionScopedKeyGenerator,
-  limit: 100,
-  message: 'Stream rate limit exceeded for this session. Please retry later.',
-  prefix: 'verida:rate-limit:stream:',
-  windowMs: 60 * 60 * 1000,
-});
+export function streamRateLimit(req: Request, res: Response, next: NextFunction): void {
+  void tryInitRedis().then((ok) => {
+    if (ok && streamRateLimitFn) {
+      streamRateLimitFn(req, res, next);
+    } else {
+      passThrough(req, res, next);
+    }
+  });
+}
 
 export async function closeRateLimitRedisClient(): Promise<void> {
-  if (redisRateLimitClient.status === 'end') {
+  if (!redisClient || redisClient.status === 'end') {
     return;
   }
 
   try {
-    await redisRateLimitClient.quit();
+    await redisClient.quit();
   } catch {
-    redisRateLimitClient.disconnect();
+    redisClient.disconnect();
   }
 }

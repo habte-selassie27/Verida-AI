@@ -23,10 +23,12 @@ export type UploadJobName = (typeof UploadJobTypes)[keyof typeof UploadJobTypes]
 export interface UploadDatasetMetadata {
   accessType: AccessType;
   blobName?: string;
+  changelog?: string;
   description: string;
   expirationMicros?: number;
   license: string;
   name: string;
+  parentDatasetId?: number;
   pricePerAccess?: number | null;
   sizeBytes?: number;
   tags: DatasetTag[];

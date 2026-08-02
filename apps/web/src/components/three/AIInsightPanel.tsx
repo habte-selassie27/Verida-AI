@@ -9,10 +9,10 @@ interface Metric {
 }
 
 const METRICS: Metric[] = [
-  { label: 'Quality Score', value: 0.97, display: '97%', color: 'var(--neon-teal)' },
-  { label: 'Duplicates', value: 0.02, display: '2%', color: 'var(--neon-blue)' },
-  { label: 'Bias', value: 0.15, display: 'Low', color: 'var(--neon-green)' },
-  { label: 'Embeddings', value: 1.0, display: 'Ready', color: 'var(--neon-purple)' },
+  { label: 'Quality Score', value: 0.97, display: '97%', color: 'var(--pink)' },
+  { label: 'Duplicates', value: 0.02, display: '2%', color: 'var(--cyan)' },
+  { label: 'Bias', value: 0.15, display: 'Low', color: 'var(--success-400)' },
+  { label: 'Embeddings', value: 1.0, display: 'Ready', color: 'var(--purple)' },
 ];
 
 function AnimatedBar({ value, color, delay }: { value: number; color: string; delay: number }) {

@@ -30,15 +30,15 @@ const nonceStore = new Map<string, NonceRecord>();
 
 const NONCE_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
 const JWT_EXPIRY = '7d';
-
 function getJwtSecret(): string {
   const secret = process.env.JWT_SECRET?.trim() ?? '';
+
   if (secret.length === 0) {
-    throw new Error('JWT_SECRET is not configured.');
+    throw new Error('JWT_SECRET environment variable is not configured. Set it in your Render dashboard under Environment.');
   }
+
   return secret;
 }
-
 // Periodic cleanup of expired nonces
 setInterval(() => {
   const now = Date.now();
@@ -56,7 +56,7 @@ const nonceRequestSchema = z.object({
 const verifyRequestSchema = z.object({
   address: z.string().trim().regex(/^0x[a-fA-F0-9]{4,}$/, 'Invalid Aptos address format.'),
   message: z.string().min(1, 'Message is required.'),
-  signature: z.string().min(1, 'Signature is required.'),
+  signature: z.string().trim().min(1, 'Signature is required.'),
 });
 
 // Test-only export. Re-using this directly skips nonce replay protection,
@@ -126,7 +126,7 @@ async function verifyAptosSignature(
 
     // ── 1. Verify the public key matches the on-chain account ─────────────
     const response = await fetch(
-      `https://fullnode.testnet.aptoslabs.com/v1/accounts/${address}`,
+      `${process.env.APTOS_NODE_URL ?? 'https://api.shelbynet.shelby.xyz/v1'}/accounts/${address}`,
     );
     if (!response.ok) {
       console.error('[Auth] Account not found on-chain, status:', response.status);

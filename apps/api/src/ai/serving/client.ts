@@ -7,8 +7,9 @@
 //
 // Supported providers (checked in priority order):
 //  1. Google Gemini (free tier: 15 RPM, 1M tokens/day)
-//  2. Anthropic Claude (paid)
-//  3. OpenAI (paid, used for embeddings)
+//  2. Groq (free tier: 30 RPM, Llama 3 models)
+//  3. Anthropic Claude (paid)
+//  4. OpenAI (paid, used for embeddings)
 
 import type { SchemaProfile } from '@verida/shared';
 
@@ -16,6 +17,7 @@ import { buildCacheKey, cachedInference } from './cache.js';
 import { buildDescriptionPrompt } from '../config/prompts/describe.js';
 
 const GEMINI_KEY = process.env.GOOGLE_AI_API_KEY?.trim();
+const GROQ_KEY = process.env.GROQ_API_KEY?.trim();
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY?.trim();
 const OPENAI_KEY = process.env.OPENAI_API_KEY?.trim();
 
@@ -38,14 +40,36 @@ export async function generateDescription(params: {
         const GoogleGenerativeAI = (mod as { GoogleGenerativeAI: new (apiKey: string) => unknown }).GoogleGenerativeAI;
         const genAI = new GoogleGenerativeAI(GEMINI_KEY);
         const model = (genAI as { getGenerativeModel: (opts: object) => unknown }).getGenerativeModel({
-          model: 'gemini-2.0-flash',
+          model: 'gemini-2.5-flash',
         });
         const result = await (model as { generateContent: (input: string) => Promise<{ response: { text: () => string } }> }).generateContent(prompt);
         const text = result.response.text();
         return text?.trim() ?? '';
       }
 
-      // 2. Try Anthropic (paid)
+      // 2. Try Groq (free, OpenAI-compatible)
+      if (GROQ_KEY) {
+        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${GROQ_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'llama-3.1-8b-instant',
+            messages: [{ role: 'user', content: prompt }],
+            max_tokens: 300,
+          }),
+        });
+
+        if (response.ok) {
+          const data = await response.json() as { choices?: { message?: { content?: string } }[] };
+          const text = data.choices?.[0]?.message?.content;
+          return text?.trim() ?? '';
+        }
+      }
+
+      // 3. Try Anthropic (paid)
       if (ANTHROPIC_KEY) {
         const pkg = '@anthropic-ai/sdk';
         const mod = await import(pkg);
@@ -85,7 +109,7 @@ export async function embedText(text: string): Promise<number[] | null> {
         const GoogleGenerativeAI = (mod as { GoogleGenerativeAI: new (apiKey: string) => unknown }).GoogleGenerativeAI;
         const genAI = new GoogleGenerativeAI(GEMINI_KEY);
         const model = (genAI as { getGenerativeModel: (opts: object) => unknown }).getGenerativeModel({
-          model: 'text-embedding-004',
+          model: 'gemini-embedding-001',
         });
         const result = await (model as { embedContent: (input: string) => Promise<{ embedding: { values: number[] } }> }).embedContent(text);
         return result.embedding.values;

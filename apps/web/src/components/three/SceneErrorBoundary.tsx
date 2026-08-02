@@ -10,17 +10,17 @@ interface State {
 }
 
 export default class SceneErrorBoundary extends Component<Props, State> {
-  state: State = { hasError: false };
+  override state: State = { hasError: false };
 
   static getDerivedStateFromError(): State {
     return { hasError: true };
   }
 
-  componentDidCatch(error: Error) {
+  override componentDidCatch(error: Error) {
     console.error('[SceneErrorBoundary] 3D scene error:', error);
   }
 
-  render() {
+  override render() {
     if (this.state.hasError) {
       return <WebGLFallback />;
     }

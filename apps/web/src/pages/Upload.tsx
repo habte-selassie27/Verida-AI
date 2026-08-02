@@ -22,6 +22,7 @@ const LICENSE_OPTIONS = [
   'GPL 3.0',
   'Custom',
 ];
+const UPLOAD_DRAFT_KEY = 'verida_upload_draft';
 const UPLOAD_STAGES = [
   'Hashing & encoding',
   'Anchoring to Aptos L1',

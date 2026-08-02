@@ -40,7 +40,7 @@
 }
 
 .input:focus {
-  border-color: var(--teal-400);
+  border-color: var(--pink);
   box-shadow: var(--shadow-input-focus);
 }
 

@@ -148,6 +148,8 @@ export interface Dataset {
   verified: boolean | null;
   tampered: boolean;
   access_count: number;
+  download_count: number;
+  unique_accessors: number;
   schema_profile: SchemaProfile | null;
   ai_description: string | null;
   suggested_tags: string[] | null;
@@ -159,6 +161,8 @@ export interface Dataset {
   quality_breakdown: QualityBreakdown | null;
   quality_scored_at: string | null;
   embedded_at: string | null;
+  on_chain_dataset_id: number | null;
+  on_chain_owner_verified: boolean | null;
 }
 
 export interface DatasetVersion {

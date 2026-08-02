@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import type { Dataset } from '@verida/shared';
 import { DatasetTag, DatasetModality } from '@verida/shared';
@@ -9,10 +9,15 @@ import { Button } from '../components/ui/Button';
 import { Skeleton } from '../components/ui/Skeleton';
 import { TagPill } from '../components/ui/TagPill';
 import { ProvenanceTree } from '../components/ProvenanceTree';
-import { getDataset, createAccessSession, verifyDataset, getSimilarDatasets } from '../api/client';
+import { getDataset, createAccessSession, verifyDataset, getSimilarDatasets, getStreamUrl, addDatasetVersion, createEscrowEntry, updateEscrowStatus } from '../api/client';
 import type { DatasetDetailResponse, SimilarDataset } from '../api/client';
 import { useWalletContext } from '../context/WalletContext';
 import { useAuth } from '../context/AuthContext';
+import { MARKETPLACE_CONTRACT_ADDRESS, OCTAS_PER_APT, calculateFeeBreakdown, fetchResource, SHELBYNET_EXPLORER } from '../lib/contracts';
+import { FeeBreakdown } from '../components/FeeBreakdown';
+import { OwnershipBadge, TransferOwnershipButton } from '../components/OwnershipBadge';
+import { EscrowStatus } from '../components/EscrowStatus';
+import { SubscriptionTier } from '../components/SubscriptionTier';
 import './DatasetDetail.css';
 
 type TabId = 'overview' | 'versions' | 'provenance' | 'access';
@@ -75,6 +80,57 @@ function getVerificationStatus(dataset: Dataset): 'verified' | 'tampered' | 'pen
   return 'unavailable';
 }
 
+const VERSION_STAGE_LABELS = [
+  'Reading & encoding',
+  'Anchoring to Aptos',
+  'Uploading to Shelby',
+  'Confirming',
+  'Complete',
+];
+
+// WebSocket progress lives on the API server, not the Vite dev server.
+// Derive the WS origin from VITE_API_URL (e.g. http://localhost:4000 -> ws://localhost:4000).
+function getWsBase(): string {
+  const apiUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
+  try {
+    const url = new URL(apiUrl);
+    const protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${protocol}//${url.host}`;
+  } catch {
+    return `ws://${window.location.host}`;
+  }
+}
+const WS_BASE = getWsBase();
+
+const ESCROW_CONFIG_RESOURCE = `${MARKETPLACE_CONTRACT_ADDRESS}::escrow::EscrowConfig`;
+// Matches DISPUTE_WINDOW_SECONDS (604800) in the escrow Move module.
+const ESCROW_DISPUTE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+function downloadTextFile(filename: string, content: string, mimeType: string): void {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function csvCell(value: unknown): string {
+  const text = value === null || value === undefined ? '' : String(value);
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function safeFilename(name: string): string {
+  const sanitized = name
+    .replace(/[^a-z0-9_.-]+/gi, '_')
+    .replace(/^_+|_+$/g, '')
+    .toLowerCase();
+  return sanitized.length > 0 ? sanitized : 'dataset';
+}
+
 function SvgIcon({ path, viewBox = '0 0 24 24' }: { path: string; viewBox?: string }) {
   return (
     <svg viewBox={viewBox} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -127,6 +183,13 @@ function getCategoryLabel(dataset: Dataset): string {
 }
 
 function guessFileFormat(dataset: Dataset): string {
+  const modality = dataset.schema_profile?.modality ?? dataset.modality;
+  if (modality === 'tabular') return 'CSV';
+  if (modality === 'text') return 'Text';
+  if (modality === 'image') return 'Image';
+  if (modality === 'audio') return 'Audio';
+  if (modality === 'video') return 'Video';
+  if (modality === 'document') return 'Document';
   const name = dataset.name.toLowerCase();
   if (name.includes('.csv') || dataset.tags.includes(DatasetTag.TABULAR)) return 'CSV';
   if (name.includes('.json') || dataset.tags.includes(DatasetTag.NLP)) return 'JSON';
@@ -134,17 +197,23 @@ function guessFileFormat(dataset: Dataset): string {
   if (name.includes('.h5') || name.includes('.hdf5')) return 'HDF5';
   if (dataset.tags.includes(DatasetTag.AUDIO)) return 'WAV/MP3';
   if (dataset.tags.includes(DatasetTag.VISION) || dataset.tags.includes(DatasetTag.MEDICAL)) return 'Image';
-  return 'CSV';
+  return 'Unknown';
 }
 
 function guessRowCount(dataset: Dataset): string {
+  const fromSchema = dataset.schema_profile?.estimatedRowCount;
+  if (fromSchema != null) return Number(fromSchema).toLocaleString();
+  const fromDb = dataset.estimated_row_count;
+  if (fromDb != null) return Number(fromDb).toLocaleString();
   const size = dataset.size_bytes;
   if (size > 1e9) return `${Math.floor(size / 1e7).toLocaleString()}+`;
   if (size > 1e8) return `${Math.floor(size / 1e6).toLocaleString()}+`;
   return '—';
 }
 
-function guessColCount(_dataset: Dataset): string {
+function guessColCount(dataset: Dataset): string {
+  const cols = dataset.schema_profile?.columns;
+  if (Array.isArray(cols) && cols.length > 0) return String(cols.length);
   return '—';
 }
 
@@ -224,6 +293,19 @@ export default function DatasetDetail() {
   const [relatedDatasets, setRelatedDatasets] = useState<SimilarDataset[]>([]);
   const [relatedLoading, setRelatedLoading] = useState(false);
   const [showAiSummary, setShowAiSummary] = useState(true);
+  const [escrowId, setEscrowId] = useState<number | null>(null);
+  const [escrowOnChainId, setEscrowOnChainId] = useState<number | null>(null);
+  const [escrowDeadline, setEscrowDeadline] = useState(0);
+  const [escrowStatus, setEscrowStatus] = useState<'pending' | 'released' | 'disputed' | 'refunded'>('pending');
+  const [actionMenuOpen, setActionMenuOpen] = useState(false);
+  const [copiedAction, setCopiedAction] = useState<string | null>(null);
+  const actionMenuRef = useRef<HTMLDivElement>(null);
+  const [onChainRegistered, setOnChainRegistered] = useState<boolean | null>(null);
+  const [versionUploading, setVersionUploading] = useState(false);
+  const [versionUploadPercent, setVersionUploadPercent] = useState(0);
+  const [versionUploadStage, setVersionUploadStage] = useState(0);
+  const versionInputRef = useRef<HTMLInputElement>(null);
+  const versionWsRef = useRef<WebSocket | null>(null);
   const { connected, address, connect, signAndSubmitTransaction } = useWalletContext();
   const { isAuthenticated, login: authLogin } = useAuth();
 
@@ -234,6 +316,10 @@ export default function DatasetDetail() {
     try {
       const result = await getDataset(Number(id));
       setDetail(result);
+
+      // On-chain ownership check requires per-dataset view call which is unavailable.
+      // Default to false; ownership badge will show "DB only" until re-registered on-chain.
+      setOnChainRegistered(false);
 
       const stored = sessionStorage.getItem(`session_${id}`);
       if (stored) {
@@ -268,12 +354,39 @@ export default function DatasetDetail() {
     fetchDetail();
   }, [fetchDetail]);
 
+  // Close any in-flight version-upload progress socket on unmount.
   useEffect(() => {
-    if (connected && address) {
-      setWalletState('connected');
-    } else {
-      setWalletState('no-wallet');
-    }
+    return () => {
+      versionWsRef.current?.close();
+    };
+  }, []);
+
+  // Close the ⋮ actions menu on outside click / Escape.
+  useEffect(() => {
+    if (!actionMenuOpen) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (actionMenuRef.current && !actionMenuRef.current.contains(event.target as Node)) {
+        setActionMenuOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setActionMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [actionMenuOpen]);
+
+  useEffect(() => {
+    // Don't overwrite 'active' or 'processing' states — those mean a valid session exists
+    setWalletState(prev => {
+      if (prev === 'active' || prev === 'processing') return prev;
+      if (connected && address) return 'connected';
+      return 'no-wallet';
+    });
   }, [connected, address]);
 
   const handleVerify = async () => {
@@ -319,24 +432,42 @@ export default function DatasetDetail() {
 
   const handleGetAccess = async () => {
     if (!id || !address || !detail) return;
+    // If we already have a valid session, just activate it — don't charge again
+    if (sessionId && walletState === 'active') {
+      setWalletState('active');
+      return;
+    }
     setAccessLoading(true);
     setWalletState('processing');
     try {
       let txHash: string | undefined;
+      let depositEscrowId: number | null = null;
 
-      // For pay-per-access datasets, submit the APT transfer first
+      // For pay-per-access datasets, deposit the payment into the on-chain
+      // escrow vault. Funds are held until the buyer confirms release (or the
+      // 7-day dispute window auto-releases them), with the 5% platform fee
+      // split off at release.
       if (detail.dataset.access_type === 'pay_per_access' && detail.dataset.price_per_access) {
         const priceOctas = detail.dataset.price_per_access;
         const publisherAddress = detail.dataset.publisher_address;
 
-        const result = await signAndSubmitTransaction({
+        // Read EscrowConfig.next_id BEFORE depositing — that is the id the
+        // deposit will create. Best-effort: if the chain can't be read we
+        // still deposit and track the escrow in the DB without on-chain ids.
+        try {
+          const config = await fetchResource<{ next_id: string }>(ESCROW_CONFIG_RESOURCE);
+          depositEscrowId = Number(config.next_id);
+        } catch {
+          depositEscrowId = null;
+        }
+
+        const depositResult = await signAndSubmitTransaction({
           data: {
-            function: '0x1::aptos_account::transfer',
-            typeArguments: ['0x1::aptos_coin::AptosCoin'],
-            functionArguments: [publisherAddress, priceOctas],
+            function: `${MARKETPLACE_CONTRACT_ADDRESS}::escrow::deposit`,
+            functionArguments: [publisherAddress, Number(id), priceOctas],
           },
         });
-        txHash = result.hash;
+        txHash = depositResult.hash;
       }
 
       const sessionResult = await createAccessSession(Number(id), address, txHash);
@@ -344,6 +475,24 @@ export default function DatasetDetail() {
       const expiresAt = sessionResult.expiresAt;
       setSessionExpires(expiresAt);
       sessionStorage.setItem(`session_${id}`, JSON.stringify({ sessionId: sessionResult.sessionId, expiresAt }));
+
+      // Persist a real escrow record for pay-per-access purchases
+      if (detail.dataset.access_type === 'pay_per_access' && txHash) {
+        try {
+          const entry = await createEscrowEntry(
+            Number(id),
+            detail.dataset.price_per_access ?? 0,
+            depositEscrowId ?? undefined,
+          );
+          setEscrowId(entry.id);
+          setEscrowOnChainId(entry.onChainEscrowId);
+          setEscrowDeadline(Date.now() + ESCROW_DISPUTE_WINDOW_MS);
+          setEscrowStatus('pending');
+        } catch (err) {
+          console.error('Failed to create escrow record:', err);
+        }
+      }
+
       setWalletState('active');
     } catch {
       setWalletState('connected');
@@ -357,6 +506,306 @@ export default function DatasetDetail() {
     setSessionId(null);
     setSessionExpires(0);
     sessionStorage.removeItem(`session_${id}`);
+  };
+
+  const handleRenewSubscription = async (tier: 'monthly' | 'quarterly' | 'annual') => {
+    if (!connected || !address || !detail) return;
+    setAccessLoading(true);
+    setWalletState('processing');
+    try {
+      const tierEnum = tier === 'monthly' ? 0 : tier === 'quarterly' ? 1 : 2;
+      const tierPrice = tier === 'monthly'
+        ? detail.dataset.price_per_access ?? 0
+        : tier === 'quarterly'
+          ? Math.round((detail.dataset.price_per_access ?? 0) * 2.7)
+          : Math.round((detail.dataset.price_per_access ?? 0) * 10);
+
+      await signAndSubmitTransaction({
+        data: {
+          function: `${MARKETPLACE_CONTRACT_ADDRESS}::subscriptions::renew`,
+          functionArguments: [address, tierEnum],
+        },
+      });
+
+      // Record renewal payment on-chain
+      const feeBreakdown = calculateFeeBreakdown(tierPrice);
+      try {
+        await signAndSubmitTransaction({
+          data: {
+            function: `${MARKETPLACE_CONTRACT_ADDRESS}::revenue::record_payment`,
+            functionArguments: [address, detail.dataset.publisher_address, tierPrice, feeBreakdown.feeAmount, Number(id), 1],
+          },
+        });
+      } catch {
+        // Revenue recording is best-effort
+      }
+
+      const sessionResult = await createAccessSession(Number(id), address);
+      setSessionId(sessionResult.sessionId);
+      setSessionExpires(sessionResult.expiresAt);
+      sessionStorage.setItem(`session_${id}`, JSON.stringify({ sessionId: sessionResult.sessionId, expiresAt: sessionResult.expiresAt }));
+      setWalletState('active');
+    } catch {
+      setWalletState('connected');
+    } finally {
+      setAccessLoading(false);
+    }
+  };
+
+  const handleRegisterOnChain = async () => {
+    if (!id || !connected) return;
+    try {
+      await signAndSubmitTransaction({
+        data: {
+          function: `${MARKETPLACE_CONTRACT_ADDRESS}::ownership::register_dataset`,
+          functionArguments: [Number(id)],
+        },
+      });
+      fetchDetail();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('EDATASET_ALREADY_REGISTERED') || msg.includes('already_exists')) {
+        alert('This dataset is already registered on-chain.');
+        fetchDetail();
+      } else {
+        alert(msg || 'Registration failed');
+      }
+    }
+  };
+
+  const handleEmitProvenance = async (eventType: number, metadata: string) => {
+    if (!id || !connected) return;
+    try {
+      await signAndSubmitTransaction({
+        data: {
+          function: `${MARKETPLACE_CONTRACT_ADDRESS}::provenance::emit_event`,
+          functionArguments: [Number(id), dataset.version, eventType, metadata],
+        },
+      });
+      fetchDetail();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to emit event');
+    }
+  };
+
+  const handleGrantAccess = async () => {
+    if (!id || !connected) return;
+    const accessor = prompt('Enter the wallet address to grant access to:');
+    if (!accessor || !accessor.startsWith('0x')) return;
+    const durationStr = prompt('Access duration in seconds (e.g. 86400 for 1 day):', '604800');
+    if (!durationStr) return;
+    const duration = parseInt(durationStr, 10);
+    if (isNaN(duration) || duration <= 0) return;
+
+    try {
+      await signAndSubmitTransaction({
+        data: {
+          function: `${MARKETPLACE_CONTRACT_ADDRESS}::access::grant_access`,
+          functionArguments: [accessor, Number(id), duration],
+        },
+      });
+      alert('Access granted on-chain');
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to grant access');
+    }
+  };
+
+  const handleRevokeAccess = async () => {
+    if (!id || !connected) return;
+    const accessor = prompt('Enter the wallet address to revoke access from:');
+    if (!accessor || !accessor.startsWith('0x')) return;
+
+    try {
+      await signAndSubmitTransaction({
+        data: {
+          function: `${MARKETPLACE_CONTRACT_ADDRESS}::access::revoke_access`,
+          functionArguments: [accessor, Number(id)],
+        },
+      });
+      alert('Access revoked on-chain');
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to revoke access');
+    }
+  };
+
+  const handleStream = () => {
+    if (!id || !sessionId) return;
+    const url = getStreamUrl(Number(id), sessionId);
+    window.open(url, '_blank');
+  };
+
+  const handleDownload = () => {
+    if (!id || !sessionId) return;
+    const url = getStreamUrl(Number(id), sessionId);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = dataset?.name ?? 'dataset';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
+  const handleExportJson = () => {
+    if (!detail) return;
+    downloadTextFile(
+      `${safeFilename(detail.dataset.name)}-detail.json`,
+      JSON.stringify(
+        {
+          exported_at: new Date().toISOString(),
+          dataset: detail.dataset,
+          provenance_chain: detail.provenance_chain,
+          versions: detail.versions,
+        },
+        null,
+        2,
+      ),
+      'application/json',
+    );
+  };
+
+  const handleExportCsv = () => {
+    if (!detail) return;
+    const header = ['id', 'dataset_id', 'version', 'event_type', 'timestamp', 'actor_address', 'tx_hash'];
+    const rows = detail.provenance_chain.map((e) => [
+      e.id,
+      e.dataset_id,
+      e.version,
+      e.event_type,
+      e.timestamp,
+      e.actor_address,
+      e.tx_hash,
+    ]);
+    const csv = [header, ...rows].map((row) => row.map(csvCell).join(',')).join('\n');
+    downloadTextFile(`${safeFilename(detail.dataset.name)}-provenance.csv`, csv, 'text/csv;charset=utf-8');
+  };
+
+  const handleCopy = async (value: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopiedAction(label);
+      window.setTimeout(() => setCopiedAction(null), 1600);
+    } catch {
+      alert('Clipboard unavailable — copy the value manually.');
+    }
+    setActionMenuOpen(false);
+  };
+
+  const handleAddVersionClick = () => {
+    if (!connected || !address) {
+      alert('Please connect your wallet first.');
+      return;
+    }
+    versionInputRef.current?.click();
+  };
+
+  const handleVersionFileSelected = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || !detail || !address) return;
+
+    const changelog = (window.prompt('Describe this version change (optional):', '') ?? '').slice(0, 2000);
+
+    // Re-authenticate fresh before uploading, mirroring the Upload page flow.
+    try {
+      if (!isAuthenticated) {
+        await authLogin();
+      }
+    } catch {
+      alert('Please sign the authentication message in your wallet to continue.');
+      return;
+    }
+
+    const jobId = crypto.randomUUID();
+    const previousVersion = detail.dataset.version;
+    let wsCompleted = false;
+    let wsErrored = false;
+
+    setVersionUploading(true);
+    setVersionUploadPercent(0);
+    setVersionUploadStage(0);
+
+    // Open the WS progress channel before POSTing (best-effort — falls back to polling).
+    const ws = new WebSocket(`${WS_BASE}/ws/uploads/${jobId}`);
+    versionWsRef.current = ws;
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'progress') {
+          setVersionUploadPercent(msg.data?.percent ?? 0);
+          const stage = msg.data?.stage;
+          if (stage === 'complete') setVersionUploadStage(4);
+          else if (stage === 'confirming') setVersionUploadStage(3);
+          else if (stage === 'registering') setVersionUploadStage(2);
+          else if (stage === 'encoding' || stage === 'reading') setVersionUploadStage(0);
+        } else if (msg.type === 'complete') {
+          wsCompleted = true;
+          ws.close();
+          setVersionUploadPercent(100);
+          setVersionUploadStage(4);
+        } else if (msg.type === 'error') {
+          wsErrored = true;
+          ws.close();
+          setVersionUploading(false);
+          alert(msg.error || 'Failed to add version');
+          fetchDetail();
+        }
+      } catch {
+        // Ignore malformed frames.
+      }
+    };
+    ws.onerror = () => {
+      // Progress stream is best-effort; the polling fallback below still completes the flow.
+      ws.close();
+    };
+    ws.onclose = () => {
+      versionWsRef.current = null;
+    };
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('name', detail.dataset.name);
+      formData.append('description', detail.dataset.description);
+      formData.append('license', detail.dataset.license);
+      formData.append('accessType', detail.dataset.access_type);
+      formData.append('publisherAddress', address);
+      formData.append('jobId', jobId);
+      if (changelog) formData.append('changelog', changelog);
+      detail.dataset.tags.forEach((tag) => formData.append('tags', tag));
+      if (detail.dataset.price_per_access) {
+        formData.append('pricePerAccess', String(detail.dataset.price_per_access));
+      }
+
+      await addDatasetVersion(Number(id), formData, jobId);
+
+      // Wait for the worker to finish: WS completion when available, otherwise poll.
+      const deadline = Date.now() + 180_000;
+      while (!wsCompleted && !wsErrored && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 2500));
+        try {
+          const refreshed = await getDataset(Number(id));
+          if (refreshed.dataset.version > previousVersion) {
+            wsCompleted = true;
+            break;
+          }
+        } catch {
+          // Transient error — keep polling.
+        }
+      }
+
+      if (wsCompleted) {
+        setVersionUploadPercent(100);
+        setVersionUploadStage(4);
+        fetchDetail();
+      } else if (!wsErrored) {
+        alert('The new version is still processing on the server. Check back in a moment.');
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to add version');
+    } finally {
+      ws.close();
+      setVersionUploading(false);
+    }
   };
 
   if (loading) {
@@ -405,7 +854,7 @@ export default function DatasetDetail() {
   const catStyle = CATEGORY_STYLES[catKey] ?? { bg: 'var(--bg-raised)', color: 'var(--text-tertiary)' };
   const catLabel = getCategoryLabel(dataset);
   const verifStatus = getVerificationStatus(dataset);
-  const alreadyVerified = verifStatus === 'verified';
+  const alreadyVerified = verifStatus === 'verified' || verifStatus === 'tampered';
   const isDescriptionLong = dataset.description.length > 400;
   const displayDesc = descExpanded || !isDescriptionLong ? dataset.description : dataset.description.slice(0, 397) + '...';
   const aiDesc = dataset.ai_description;
@@ -423,6 +872,7 @@ export default function DatasetDetail() {
     ? `${(dataset.price_per_access / OCTAS_PER_APT).toFixed(2)} APT`
     : '—';
   const isOwner = connected && address === dataset.publisher_address;
+  const isLocked = dataset.access_type === 'pay_per_access' && walletState !== 'active' && !isOwner;
 
   const provenanceEvents = provenance_chain.map((e) => ({
     id: e.id,
@@ -448,10 +898,24 @@ export default function DatasetDetail() {
     <div>
       {/* BREADCRUMB */}
       <div className="dd-breadcrumb">
-        <Link to="/">Marketplace</Link>
+        <Link to="/marketplace">Marketplace</Link>
         <span className="dd-breadcrumb-sep"> / </span>
         {dataset.name}
       </div>
+
+      {/* PAYWALL BANNER */}
+      {isLocked && (
+        <div className="dd-paywall-banner">
+          <div className="dd-paywall-lock"><LockIcon /></div>
+          <div className="dd-paywall-info">
+            <span className="dd-paywall-label">LOCKED</span>
+            <span className="dd-paywall-price">{priceStr}</span>
+          </div>
+          <Button variant="primary" size="sm" onClick={() => setActiveTab('access')}>
+            Unlock Dataset
+          </Button>
+        </div>
+      )}
 
       {/* HEADER PANEL */}
       <div className="dd-header">
@@ -467,6 +931,12 @@ export default function DatasetDetail() {
               <span className="dd-publisher-addr">
                 <AddressDisplay value={dataset.publisher_address} type="address" showCopyIcon={false} showAptosLink={false} />
               </span>
+              <OwnershipBadge
+                isOnChain={!!dataset.on_chain_owner_verified || !!onChainRegistered}
+                isOwner={isOwner}
+                ownerAddress={dataset.publisher_address}
+                compact
+              />
               <span className="dd-timestamp">{formatDate(dataset.created_at)}</span>
             </div>
           </div>
@@ -475,9 +945,74 @@ export default function DatasetDetail() {
             <Button variant="teal-outline" size="sm" loading={verifyLoading} onClick={handleVerify}>
               {alreadyVerified ? 'Re-verify Integrity' : 'Verify Integrity'}
             </Button>
-            <button className="dd-action-btn" title="Actions" aria-label="Actions menu">
-              <DotsIcon />
-            </button>
+            <div className="dd-action-menu-wrap" ref={actionMenuRef}>
+              <button
+                className={`dd-action-btn ${actionMenuOpen ? 'dd-action-btn-open' : ''}`}
+                title="Actions"
+                aria-label="Actions menu"
+                aria-expanded={actionMenuOpen}
+                onClick={() => setActionMenuOpen((open) => !open)}
+              >
+                <DotsIcon />
+              </button>
+              {actionMenuOpen && (
+                <div className="dd-action-menu" role="menu">
+                  <button
+                    role="menuitem"
+                    onClick={() => handleCopy(dataset.shelby_blob_id, 'blobId')}
+                  >
+                    <span>Copy blob ID</span>
+                    {copiedAction === 'blobId' && <span className="dd-menu-check">✓</span>}
+                  </button>
+                  <button
+                    role="menuitem"
+                    onClick={() => handleCopy(dataset.merkle_root, 'merkleRoot')}
+                  >
+                    <span>Copy merkle root</span>
+                    {copiedAction === 'merkleRoot' && <span className="dd-menu-check">✓</span>}
+                  </button>
+                  <a
+                    role="menuitem"
+                    href={dataset.provenance_receipt?.txHash
+                      ? `${SHELBYNET_EXPLORER}/txn/${dataset.provenance_receipt.txHash}?network=testnet`
+                      : `${SHELBYNET_EXPLORER}/account/${dataset.publisher_address}?network=testnet`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => setActionMenuOpen(false)}
+                  >
+                    View on Explorer ↗
+                  </a>
+                  <button
+                    role="menuitem"
+                    onClick={() => {
+                      setActionMenuOpen(false);
+                      handleVerify();
+                    }}
+                  >
+                    Verify Integrity
+                  </button>
+                  <div className="dd-menu-sep" />
+                  <button
+                    role="menuitem"
+                    onClick={() => {
+                      setActionMenuOpen(false);
+                      handleExportJson();
+                    }}
+                  >
+                    Export JSON
+                  </button>
+                  <button
+                    role="menuitem"
+                    onClick={() => {
+                      setActionMenuOpen(false);
+                      handleExportCsv();
+                    }}
+                  >
+                    Export CSV
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -511,7 +1046,7 @@ export default function DatasetDetail() {
           </div>
           <div className="dd-chip">
             <span className="dd-chip-icon"><RefreshIcon /></span>
-            <span className="dd-chip-label">— accesses</span>
+            <span className="dd-chip-label">{dataset.access_count ?? 0} accesses</span>
           </div>
           {/* AI Content Type Detection */}
           {dataset.modality && (
@@ -713,11 +1248,31 @@ export default function DatasetDetail() {
                 <div className="dd-versions-header">
                   <span className="dd-versions-title">Version History</span>
                   {isOwner && (
-                    <Button variant="ghost" size="sm">
-                      <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                        + Add New Version
-                      </span>
-                    </Button>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                      {versionUploading && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 160 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: 'var(--font-sans)', fontSize: 11, color: 'var(--text-tertiary)' }}>
+                            <span>{VERSION_STAGE_LABELS[versionUploadStage] ?? 'Uploading'}</span>
+                            <span>{versionUploadPercent}%</span>
+                          </div>
+                          <div style={{ width: 160, height: 4, borderRadius: 2, background: 'var(--border-subtle)', overflow: 'hidden' }}>
+                            <div style={{ width: `${versionUploadPercent}%`, height: '100%', background: 'var(--teal-400)', transition: 'width 0.3s ease' }} />
+                          </div>
+                        </div>
+                      )}
+                      <Button variant="ghost" size="sm" onClick={handleAddVersionClick} loading={versionUploading}>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                          + Add New Version
+                        </span>
+                      </Button>
+                      <input
+                        ref={versionInputRef}
+                        type="file"
+                        hidden
+                        accept=".csv,.json,.parquet,.zip,.hdf5,.pkl,.pickle"
+                        onChange={handleVersionFileSelected}
+                      />
+                    </div>
                   )}
                 </div>
                 {versions.length === 0 ? (
@@ -749,7 +1304,7 @@ export default function DatasetDetail() {
                             <Button variant="teal-outline" size="sm" onClick={handleVerify} loading={verifyLoading}>
                               {alreadyVerified ? 'Re-verify This Version' : 'Verify This Version'}
                             </Button>
-                            <Button variant="ghost" size="sm">
+                            <Button variant="ghost" size="sm" onClick={handleStream}>
                               <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                                 <DownloadIcon /> Stream
                               </span>
@@ -768,8 +1323,13 @@ export default function DatasetDetail() {
                 <div className="dd-provenance-header">
                   <span className="dd-provenance-title">Provenance Chain — {provCount} events</span>
                   <div className="dd-provenance-actions">
-                    <Button variant="ghost" size="sm">Export JSON</Button>
-                    <Button variant="ghost" size="sm">Export CSV</Button>
+                    {isOwner && connected && (
+                      <Button variant="teal-outline" size="sm" onClick={() => handleEmitProvenance(4, 'Accessed via marketplace')}>
+                        Emit Access Event
+                      </Button>
+                    )}
+                    <Button variant="ghost" size="sm" onClick={handleExportJson}>Export JSON</Button>
+                    <Button variant="ghost" size="sm" onClick={handleExportCsv}>Export CSV</Button>
                   </div>
                 </div>
                 <div className={`dd-chain-card ${chainIntact ? 'dd-chain-intact' : 'dd-chain-broken'}`}>
@@ -789,9 +1349,64 @@ export default function DatasetDetail() {
                       <span className="dd-access-free-text">Freely accessible — no payment required</span>
                     </div>
                     <div className="dd-access-actions">
-                      <Button variant="primary" size="lg">Stream Dataset</Button>
-                      <Button variant="ghost" size="lg">Download ZIP</Button>
+                      <Button variant="primary" size="lg" onClick={() => { if (!sessionId) { createAccessSession(Number(id), address ?? '').then(s => { setSessionId(s.sessionId); setSessionExpires(s.expiresAt); setWalletState('active'); sessionStorage.setItem(`session_${id}`, JSON.stringify({ sessionId: s.sessionId, expiresAt: s.expiresAt })); }); } else { handleStream(); } }}>Stream Dataset</Button>
+                      <Button variant="ghost" size="lg" onClick={handleDownload}>Download ZIP</Button>
                     </div>
+                  </div>
+                ) : dataset.access_type === 'subscription' ? (
+                  <div>
+                    <SubscriptionTier
+                      monthlyPrice={detail.dataset.price_per_access ?? 0}
+                      quarterlyPrice={Math.round((detail.dataset.price_per_access ?? 0) * 2.7)}
+                      annualPrice={Math.round((detail.dataset.price_per_access ?? 0) * 10)}
+                      onSelect={(tier) => {
+                        if (!connected) {
+                          handleConnectWallet();
+                          return;
+                        }
+                        setAccessLoading(true);
+                        setWalletState('processing');
+                        const tierPrice = tier === 'monthly' ? detail.dataset.price_per_access ?? 0 : tier === 'quarterly' ? Math.round((detail.dataset.price_per_access ?? 0) * 2.7) : Math.round((detail.dataset.price_per_access ?? 0) * 10);
+                        signAndSubmitTransaction({
+                          data: {
+                            function: `${MARKETPLACE_CONTRACT_ADDRESS}::subscriptions::subscribe`,
+                            functionArguments: [address, tier === 'monthly' ? 0 : tier === 'quarterly' ? 1 : 2],
+                          },
+                        }).then(() => {
+                          // Record subscription payment on-chain
+                          const feeBreakdown = calculateFeeBreakdown(tierPrice);
+                          return signAndSubmitTransaction({
+                            data: {
+                              function: `${MARKETPLACE_CONTRACT_ADDRESS}::revenue::record_payment`,
+                              functionArguments: [address, detail.dataset.publisher_address, tierPrice, feeBreakdown.feeAmount, Number(id), 1],
+                            },
+                          }).catch(() => {});
+                        }).then(() => {
+                          createAccessSession(Number(id), address!);
+                          setWalletState('active');
+                        }).catch(() => {
+                          setWalletState('connected');
+                        }).finally(() => setAccessLoading(false));
+                      }}
+                      loading={accessLoading}
+                    />
+                    {connected && (
+                      <div style={{ marginTop: 16, borderTop: '1px solid var(--border-subtle)', paddingTop: 16 }}>
+                        <Button
+                          variant="ghost"
+                          size="lg"
+                          fullWidth
+                          loading={accessLoading}
+                          onClick={() => handleRenewSubscription('monthly')}
+                          disabled={!connected}
+                        >
+                          Renew Subscription
+                        </Button>
+                        <p style={{ fontFamily: 'var(--font-sans)', fontSize: 12, color: 'var(--text-tertiary)', textAlign: 'center', marginTop: 8 }}>
+                          Extends your current active subscription by one billing cycle
+                        </p>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div>
@@ -799,6 +1414,10 @@ export default function DatasetDetail() {
                     <div style={{ fontFamily: 'var(--font-sans)', fontSize: 12, color: 'var(--text-tertiary)', marginTop: 4 }}>
                       per 24-hour session
                     </div>
+
+                    {detail.dataset.price_per_access && (
+                      <FeeBreakdown priceOctas={detail.dataset.price_per_access} compact />
+                    )}
 
                     {walletState === 'no-wallet' && (
                       <div>
@@ -857,9 +1476,37 @@ export default function DatasetDetail() {
                             Session ID: {sessionId.slice(0, 12)}...
                           </div>
                         </div>
+                        {escrowId && (
+                          <EscrowStatus
+                            escrowId={escrowOnChainId}
+                            dbEscrowId={escrowId}
+                            deadline={escrowDeadline}
+                            status={escrowStatus}
+                            onConfirm={async (txHash) => {
+                              if (escrowId) {
+                                try {
+                                  await updateEscrowStatus(escrowId, 'released', txHash);
+                                } catch (err) {
+                                  console.error('Failed to sync escrow release:', err);
+                                }
+                              }
+                              setEscrowStatus('released');
+                            }}
+                            onDispute={async (txHash) => {
+                              if (escrowId) {
+                                try {
+                                  await updateEscrowStatus(escrowId, 'disputed', txHash);
+                                } catch (err) {
+                                  console.error('Failed to sync escrow dispute:', err);
+                                }
+                              }
+                              setEscrowStatus('disputed');
+                            }}
+                          />
+                        )}
                         <div className="dd-access-actions" style={{ marginTop: 12 }}>
-                          <Button variant="primary" size="lg">Stream Dataset</Button>
-                          <Button variant="ghost" size="lg">Download ZIP</Button>
+                          <Button variant="primary" size="lg" onClick={handleStream}>Stream Dataset</Button>
+                          <Button variant="ghost" size="lg" onClick={handleDownload}>Download ZIP</Button>
                         </div>
                       </div>
                     )}
@@ -891,15 +1538,15 @@ export default function DatasetDetail() {
             <div className="dd-panel-title">Quick Stats</div>
             <div className="dd-quick-stats">
               <div className="dd-quick-stat">
-                <div className="dd-quick-stat-value">—</div>
+                <div className="dd-quick-stat-value">{dataset.access_count ?? 0}</div>
                 <div className="dd-quick-stat-label">Accesses</div>
               </div>
               <div className="dd-quick-stat">
-                <div className="dd-quick-stat-value">—</div>
+                <div className="dd-quick-stat-value">{dataset.download_count ?? 0}</div>
                 <div className="dd-quick-stat-label">Downloads</div>
               </div>
               <div className="dd-quick-stat">
-                <div className="dd-quick-stat-value">—</div>
+                <div className="dd-quick-stat-value">{dataset.unique_accessors ?? 0}</div>
                 <div className="dd-quick-stat-label">Accessors</div>
               </div>
             </div>
@@ -1116,6 +1763,32 @@ export default function DatasetDetail() {
               </div>
             )}
           </div>
+
+          {/* PANEL 5: Publisher On-Chain Actions */}
+          {isOwner && connected && (
+            <div className="dd-panel-card">
+              <div className="dd-panel-title">Publisher Actions (On-Chain)</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
+                {!dataset.on_chain_owner_verified && !onChainRegistered && (
+                  <Button variant="teal-outline" size="sm" fullWidth onClick={handleRegisterOnChain}>
+                    Register Ownership On-Chain
+                  </Button>
+                )}
+                {onChainRegistered && (
+                  <div style={{ fontFamily: 'var(--font-sans)', fontSize: 12, color: 'var(--teal-400)', textAlign: 'center', padding: '6px 0' }}>
+                    ✓ Ownership registered on-chain
+                  </div>
+                )}
+                <TransferOwnershipButton datasetId={Number(id)} isOwner={isOwner} />
+                <Button variant="ghost" size="sm" fullWidth onClick={handleGrantAccess}>
+                  Grant Access
+                </Button>
+                <Button variant="ghost" size="sm" fullWidth onClick={handleRevokeAccess}>
+                  Revoke Access
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

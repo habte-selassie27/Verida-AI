@@ -1,19 +1,24 @@
-import { type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { type ReactNode, type MouseEventHandler } from 'react';
 import { motion } from 'framer-motion';
 import './Button.css';
 
 type ButtonVariant = 'primary' | 'ghost' | 'danger' | 'teal-outline' | 'icon';
 type ButtonSize = 'sm' | 'md' | 'lg';
 
-interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+interface ButtonProps {
   variant?: ButtonVariant;
   size?: ButtonSize;
   loading?: boolean;
   icon?: ReactNode;
   fullWidth?: boolean;
+  disabled?: boolean;
+  onClick?: MouseEventHandler<HTMLButtonElement>;
+  className?: string;
+  type?: 'button' | 'submit' | 'reset';
+  children?: ReactNode;
 }
 
-const springTap = { type: 'spring', stiffness: 400, damping: 17 };
+const springTap = { type: 'spring' as const, stiffness: 400, damping: 17 };
 
 export function Button({
   variant = 'primary',
@@ -26,7 +31,6 @@ export function Button({
   className = '',
   type = 'button',
   fullWidth,
-  ...rest
 }: ButtonProps) {
   const classes = [
     'btn',
@@ -39,16 +43,15 @@ export function Button({
     .filter(Boolean)
     .join(' ');
 
+  const hoverProps = (!disabled && !loading) ? { whileHover: { scale: 1.02 }, whileTap: { scale: 0.97 } } : {};
   return (
     <motion.button
       type={type}
       className={classes}
       disabled={disabled || loading}
       onClick={onClick}
-      whileHover={!disabled && !loading ? { scale: 1.02 } : undefined}
-      whileTap={!disabled && !loading ? { scale: 0.97 } : undefined}
       transition={springTap}
-      {...rest}
+      {...hoverProps}
     >
       {loading ? null : icon}
       {children && <span className={loading ? 'btn-label' : ''}>{children}</span>}

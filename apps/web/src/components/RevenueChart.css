@@ -1,0 +1,108 @@
+.revenue-chart {
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 20px;
+}
+
+.revenue-chart-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
+.revenue-chart-title {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.revenue-chart-subtitle {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+}
+
+.revenue-verified-badge {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 500;
+  color: #00d4c8;
+  background: rgba(0, 245, 212, 0.1);
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+
+.revenue-total {
+  text-align: center;
+  padding: 16px 0;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.revenue-total-value {
+  font-family: var(--font-mono);
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--green);
+  display: block;
+}
+
+.revenue-total-label {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-top: 4px;
+  display: block;
+}
+
+.revenue-bars {
+  display: flex;
+  gap: 6px;
+  align-items: flex-end;
+  height: 120px;
+}
+
+.revenue-bar-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+}
+
+.revenue-bar-value {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-tertiary);
+  margin-bottom: 4px;
+  height: 14px;
+}
+
+.revenue-bar-track {
+  flex: 1;
+  width: 100%;
+  background: var(--bg-base);
+  border-radius: 4px 4px 0 0;
+  display: flex;
+  align-items: flex-end;
+  overflow: hidden;
+}
+
+.revenue-bar-fill {
+  width: 100%;
+  background: linear-gradient(to top, rgba(0, 245, 212, 0.6), rgba(0, 245, 212, 0.2));
+  border-radius: 4px 4px 0 0;
+  transition: height 0.3s ease;
+}
+
+.revenue-bar-label {
+  font-family: var(--font-sans);
+  font-size: 9px;
+  color: var(--text-tertiary);
+  margin-top: 4px;
+  text-transform: uppercase;
+}

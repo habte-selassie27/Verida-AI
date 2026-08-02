@@ -18,9 +18,40 @@ services:
       JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-in-production}
       SHELBY_API_KEY: ${SHELBY_API_KEY:-}
       SHELBY_SIGNER_PRIVATE_KEY: ${SHELBY_SIGNER_PRIVATE_KEY:-}
-      SHELBY_NETWORK: ${SHELBY_NETWORK:-testnet}
+      SHELBY_NETWORK: ${SHELBY_NETWORK:-shelbynet}
+      SHELBY_RPC_URL: ${SHELBY_RPC_URL:-https://api.shelbynet.shelby.xyz/shelby}
+      SHELBY_LOCATION: ${SHELBY_LOCATION:-shelbynet-1}
+      # The dedicated `keeper` service below owns the auto-release sweep — keep
+      # the API itself from also running it (only one runner at a time).
+      ESCROW_KEEPER_ENABLED: ${ESCROW_KEEPER_ENABLED:-false}
     ports:
       - '4000:4000'
+
+  # Escrow auto-release keeper — runs the one-shot sweep on a loop, sleeping
+  # ESCROW_KEEPER_INTERVAL_MS between passes. Kept separate from the API so a
+  # keeper crash or long sweep can't affect request latency.
+  keeper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: verida-keeper
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://verida:localpass@postgres:5432/verida_ai
+      SHELBY_SIGNER_PRIVATE_KEY: ${SHELBY_SIGNER_PRIVATE_KEY:-}
+      APTOS_NODE_URL: ${APTOS_NODE_URL:-https://fullnode.testnet.aptoslabs.com}
+      APTOS_NETWORK: ${APTOS_NETWORK:-testnet}
+      MARKETPLACE_CONTRACT_ADDRESS: ${MARKETPLACE_CONTRACT_ADDRESS:-0x141a8b5da194f039af93bdb7df81824a506fe73cade01138d2309aa7d497fddd}
+      ESCROW_KEEPER_INTERVAL_MS: ${ESCROW_KEEPER_INTERVAL_MS:-3600000}
+    command: >-
+      sh -c "while true; do
+        node dist/scripts/escrow-keeper-run.js || echo 'keeper sweep failed';
+        sleep $((ESCROW_KEEPER_INTERVAL_MS / 1000));
+      done"
 
   postgres:
     image: postgres:16

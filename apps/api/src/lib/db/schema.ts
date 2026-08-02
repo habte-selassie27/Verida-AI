@@ -36,6 +36,7 @@ export const provenanceEventTypes = [
   'VERIFIED',
   'TAMPER_DETECTED',
   'ACCESSED',
+  'OWNERSHIP_TRANSFERRED',
 ] as const;
 
 export type ProvenanceEventType = (typeof provenanceEventTypes)[number];
@@ -90,6 +91,8 @@ export const datasets = pgTable(
     qualityScoredAt: timestamp('quality_scored_at', { withTimezone: true, mode: 'string' }),
     embedding: jsonb('embedding').$type<number[]>(),
     embeddedAt: timestamp('embedded_at', { withTimezone: true, mode: 'string' }),
+    onChainDatasetId: bigint('on_chain_dataset_id', { mode: 'number' }),
+    onChainOwnerVerified: boolean('on_chain_owner_verified').notNull().default(false),
   },
   (table) => ({
     shelbyBlobIdUniqueIdx: uniqueIndex('datasets_shelby_blob_id_unique').on(table.shelbyBlobId),
@@ -142,6 +145,8 @@ export const accessSessions = pgTable(
     expiresAt: timestamp('expires_at', { withTimezone: true, mode: 'string' }).notNull(),
     bytesConsumed: bigint('bytes_consumed', { mode: 'number' }).notNull().default(0),
     status: text('status').notNull().$type<AccessSessionStatus>(),
+    onChainGranted: boolean('on_chain_granted').notNull().default(false),
+    grantTxHash: text('grant_tx_hash'),
   },
   (table) => ({
     sessionIdUniqueIdx: uniqueIndex('access_sessions_session_id_unique').on(table.sessionId),
@@ -208,6 +213,83 @@ export const accessSessionRelations = relations(accessSessions, ({ one }) => ({
 export const provenanceChainRelations = relations(provenanceChain, ({ one }) => ({
   dataset: one(datasets, {
     fields: [provenanceChain.datasetId],
+    references: [datasets.id],
+  }),
+}));
+
+export const escrowEntries = pgTable(
+  'escrow_entries',
+  {
+    id: serial('id').primaryKey(),
+    onChainEscrowId: bigint('on_chain_escrow_id', { mode: 'number' }),
+    buyerAddress: text('buyer_address').notNull(),
+    publisherAddress: text('publisher_address').notNull(),
+    datasetId: integer('dataset_id').references(() => datasets.id, { onDelete: 'cascade', onUpdate: 'cascade' }),
+    amountOctas: bigint('amount_octas', { mode: 'number' }).notNull(),
+    status: text('status').notNull().default('pending'),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true, mode: 'string' }),
+    disputeReason: text('dispute_reason'),
+  },
+  (table) => ({
+    buyerAddressIdx: index('escrow_buyer_address_idx').on(table.buyerAddress),
+    datasetIdIdx: index('escrow_dataset_id_idx').on(table.datasetId),
+    statusIdx: index('escrow_status_idx').on(table.status),
+  }),
+);
+
+export const subscriptions = pgTable(
+  'subscriptions',
+  {
+    id: serial('id').primaryKey(),
+    subscriberAddress: text('subscriber_address').notNull(),
+    datasetId: integer('dataset_id').references(() => datasets.id, { onDelete: 'cascade', onUpdate: 'cascade' }),
+    tier: text('tier').notNull(),
+    startedAt: timestamp('started_at', { withTimezone: true, mode: 'string' }).notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true, mode: 'string' }).notNull(),
+    active: boolean('active').notNull().default(true),
+    paymentsMade: integer('payments_made').notNull().default(1),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
+  },
+  (table) => ({
+    subscriberIdx: index('subscriptions_subscriber_idx').on(table.subscriberAddress),
+    datasetIdx: index('subscriptions_dataset_idx').on(table.datasetId),
+    activeIdx: index('subscriptions_active_idx').on(table.active, table.expiresAt),
+  }),
+);
+
+export const onChainPayments = pgTable(
+  'on_chain_payments',
+  {
+    id: serial('id').primaryKey(),
+    payerAddress: text('payer_address').notNull(),
+    payeeAddress: text('payee_address').notNull(),
+    amountOctas: bigint('amount_octas', { mode: 'number' }).notNull(),
+    feeOctas: bigint('fee_octas', { mode: 'number' }).notNull(),
+    datasetId: integer('dataset_id'),
+    paymentType: text('payment_type').notNull(),
+    txHash: text('tx_hash').notNull(),
+    timestamp: timestamp('timestamp', { withTimezone: true, mode: 'string' }).notNull(),
+    syncedAt: timestamp('synced_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
+  },
+  (table) => ({
+    payeeIdx: index('on_chain_payments_payee_idx').on(table.payeeAddress),
+    datasetIdx: index('on_chain_payments_dataset_idx').on(table.datasetId),
+    timestampIdx: index('on_chain_payments_timestamp_idx').on(table.timestamp),
+    txHashUniqueIdx: uniqueIndex('on_chain_payments_tx_hash_unique').on(table.txHash),
+  }),
+);
+
+export const escrowEntryRelations = relations(escrowEntries, ({ one }) => ({
+  dataset: one(datasets, {
+    fields: [escrowEntries.datasetId],
+    references: [datasets.id],
+  }),
+}));
+
+export const subscriptionRelations = relations(subscriptions, ({ one }) => ({
+  dataset: one(datasets, {
+    fields: [subscriptions.datasetId],
     references: [datasets.id],
   }),
 }));

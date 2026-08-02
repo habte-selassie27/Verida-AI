@@ -19,11 +19,11 @@
 }
 
 .card-selected {
-  border: 1px solid var(--teal-400);
+  border: 1px solid var(--pink);
 }
 
 .card-accent {
-  border-left: 2px solid var(--teal-400);
+  border-left: 2px solid var(--pink);
   padding-left: var(--sp-4);
 }
 

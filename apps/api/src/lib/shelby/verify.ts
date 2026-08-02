@@ -5,6 +5,9 @@
 // DB TABLES: datasets, provenance_chain
 // HANDOFF TO TESTER: Verify invalid roots mark datasets.tampered, write provenance events, and return a false result.
 
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 
 import { db, datasets, provenanceChain } from '../db/index.js';
@@ -16,6 +19,8 @@ import {
   ShelbyVerificationError,
 } from './client.js';
 
+const LOCAL_BLOBS_DIR = join(process.cwd(), '.shelby-blobs');
+
 interface ShelbyBlobMetadataLike {
   blobMerkleRoot?: unknown;
   creationMicros?: number;
@@ -25,6 +30,7 @@ interface ShelbyBlobMetadataLike {
   name?: string;
   owner?: unknown;
   size?: number;
+  storage?: 'local' | 'remote';
 }
 
 interface DatasetVerificationLookup {
@@ -68,92 +74,151 @@ async function extractMerkleRoot(metadata: ShelbyBlobMetadataLike): Promise<stri
   throw new ShelbyVerificationError('Shelby metadata did not contain a readable merkle root.');
 }
 
+async function persistTamperEvidence(
+  blobId: string,
+  normalizedExpected: string,
+  normalizedActual: string,
+  checkedAt: number,
+  metadata: ShelbyBlobMetadataLike,
+): Promise<{ checkedAt: number; details: Record<string, unknown>; valid: boolean }> {
+  const datasetRows = await db
+    .select({
+      id: datasets.id,
+      version: datasets.version,
+      publisherAddress: datasets.publisherAddress,
+      provenanceReceipt: datasets.provenanceReceipt,
+      shelbyBlobId: datasets.shelbyBlobId,
+    })
+    .from(datasets)
+    .where(eq(datasets.shelbyBlobId, blobId))
+    .limit(1);
+
+  const dataset = datasetRows.at(0) as DatasetVerificationLookup | undefined;
+
+  if (dataset === undefined) {
+    throw new ShelbyVerificationError(`No dataset found for Shelby blob id ${blobId}.`);
+  }
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(datasets)
+      .set({ tampered: true })
+      .where(eq(datasets.shelbyBlobId, blobId));
+
+    await tx.insert(provenanceChain).values({
+      datasetId: dataset.id,
+      version: dataset.version,
+      eventType: 'TAMPER_DETECTED' as ProvenanceEventType,
+      actorAddress: dataset.publisherAddress,
+      timestamp: new Date(checkedAt).toISOString(),
+      shelbyReceipt: dataset.provenanceReceipt,
+      txHash: dataset.provenanceReceipt.txHash,
+      metadata: {
+        expectedMerkleRoot: normalizedExpected,
+        actualResult: { valid: false, checkedAt, details: { actualMerkleRoot: normalizedActual } },
+        checkedAt,
+      },
+    });
+  });
+
+  return {
+    checkedAt,
+    valid: false,
+    details: {
+      expectedMerkleRoot: normalizedExpected,
+      actualMerkleRoot: normalizedActual,
+      blobMetadata: metadata,
+    },
+  };
+}
+
+async function verifyOnChain(
+  blobId: string,
+  expectedMerkleRoot: string,
+): Promise<{ checkedAt: number; details: Record<string, unknown>; valid: boolean }> {
+  const runtime = await getShelbyRuntime();
+  const { accountAddress, blobName } = await parseBlobId(blobId);
+  const metadata = (await runtime.client.coordination.getBlobMetadata({
+    account: accountAddress,
+    name: blobName,
+  })) as ShelbyBlobMetadataLike;
+
+  const actualMerkleRoot = await extractMerkleRoot(metadata);
+  const normalizedExpected = await normalizeMerkleRoot(expectedMerkleRoot);
+  const normalizedActual = await normalizeMerkleRoot(actualMerkleRoot);
+  const checkedAt = Date.now();
+
+  if (normalizedExpected !== normalizedActual) {
+    return persistTamperEvidence(blobId, normalizedExpected, normalizedActual, checkedAt, metadata);
+  }
+
+  return {
+    checkedAt,
+    valid: true,
+    details: {
+      expectedMerkleRoot: normalizedExpected,
+      actualMerkleRoot: normalizedActual,
+      blobMetadata: metadata,
+    },
+  };
+}
+
+async function verifyLocal(
+  blobId: string,
+  expectedMerkleRoot: string,
+): Promise<{ checkedAt: number; details: Record<string, unknown>; valid: boolean }> {
+  const { accountAddress, blobName } = await parseBlobId(blobId);
+  const blobPath = join(LOCAL_BLOBS_DIR, accountAddress, blobName);
+
+  let blobData: Buffer;
+  try {
+    blobData = await readFile(blobPath);
+  } catch {
+    throw new ShelbyVerificationError(
+      `Blob not found on-chain or locally: ${blobId}`,
+    );
+  }
+
+  const actualMerkleRoot = createHash('sha256').update(blobData).digest('hex');
+  const normalizedExpected = await normalizeMerkleRoot(expectedMerkleRoot);
+  const normalizedActual = await normalizeMerkleRoot(actualMerkleRoot);
+  const checkedAt = Date.now();
+
+  if (normalizedExpected !== normalizedActual) {
+    return persistTamperEvidence(blobId, normalizedExpected, normalizedActual, checkedAt, {
+      name: blobName,
+      size: blobData.byteLength,
+      storage: 'local',
+    });
+  }
+
+  return {
+    checkedAt,
+    valid: true,
+    details: {
+      expectedMerkleRoot: normalizedExpected,
+      actualMerkleRoot: normalizedActual,
+      storage: 'local',
+    },
+  };
+}
+
 export async function verifyIntegrity(
   blobId: string,
   expectedMerkleRoot: string,
 ): Promise<{ checkedAt: number; details: Record<string, unknown>; valid: boolean }> {
   try {
-    const runtime = await getShelbyRuntime();
-    const { accountAddress, blobName } = await parseBlobId(blobId);
-    const metadata = (await runtime.client.coordination.getBlobMetadata({
-      account: accountAddress,
-      name: blobName,
-    })) as ShelbyBlobMetadataLike;
-
-    const actualMerkleRoot = await extractMerkleRoot(metadata);
-    const normalizedExpected = await normalizeMerkleRoot(expectedMerkleRoot);
-    const normalizedActual = await normalizeMerkleRoot(actualMerkleRoot);
-    const checkedAt = Date.now();
-
-    if (normalizedExpected !== normalizedActual) {
-      const datasetRows = await db
-        .select({
-          id: datasets.id,
-          version: datasets.version,
-          publisherAddress: datasets.publisherAddress,
-          provenanceReceipt: datasets.provenanceReceipt,
-          shelbyBlobId: datasets.shelbyBlobId,
-        })
-        .from(datasets)
-        .where(eq(datasets.shelbyBlobId, blobId))
-        .limit(1);
-
-      const dataset = datasetRows.at(0) as DatasetVerificationLookup | undefined;
-
-      if (dataset === undefined) {
-        throw new ShelbyVerificationError(`No dataset found for Shelby blob id ${blobId}.`);
-      }
-
-      await db.transaction(async (tx) => {
-        await tx
-          .update(datasets)
-          .set({
-            tampered: true,
-          })
-          .where(eq(datasets.shelbyBlobId, blobId));
-
-        await tx.insert(provenanceChain).values({
-          datasetId: dataset.id,
-          version: dataset.version,
-          eventType: 'TAMPER_DETECTED' as ProvenanceEventType,
-          actorAddress: dataset.publisherAddress,
-          timestamp: new Date(checkedAt).toISOString(),
-          shelbyReceipt: dataset.provenanceReceipt,
-          txHash: dataset.provenanceReceipt.txHash,
-          metadata: {
-            expectedMerkleRoot: normalizedExpected,
-            actualResult: {
-              valid: false,
-              checkedAt,
-              details: {
-                actualMerkleRoot: normalizedActual,
-              },
-            },
-            checkedAt,
-          },
-        });
-      });
-
-      return {
-        checkedAt,
-        valid: false,
-        details: {
-          expectedMerkleRoot: normalizedExpected,
-          actualMerkleRoot: normalizedActual,
-          blobMetadata: metadata,
-        },
-      };
+    // Try on-chain verification first
+    try {
+      return await verifyOnChain(blobId, expectedMerkleRoot);
+    } catch (onChainError: unknown) {
+      // If on-chain fails, try local blob verification
+      console.warn(
+        `[Verify] On-chain verification failed, trying local fallback:`,
+        onChainError instanceof Error ? onChainError.message : onChainError,
+      );
+      return await verifyLocal(blobId, expectedMerkleRoot);
     }
-
-    return {
-      checkedAt,
-      valid: true,
-      details: {
-        expectedMerkleRoot: normalizedExpected,
-        actualMerkleRoot: normalizedActual,
-        blobMetadata: metadata,
-      },
-    };
   } catch (cause: unknown) {
     if (cause instanceof ShelbyVerificationError) {
       throw cause;

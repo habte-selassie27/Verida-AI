@@ -1,0 +1,254 @@
+/* ─── Docs Home ─────────────────────────────────────────────────────── */
+
+.doch {
+  padding-bottom: 4rem;
+  overflow: hidden;
+}
+
+/* ─── Hero ──────────────────────────────────────────────────────────── */
+
+.doch-hero {
+  position: relative;
+  text-align: center;
+  padding: 6rem 1.5rem 4rem;
+}
+
+.doch-hero-glow {
+  position: absolute;
+  top: -30%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 700px;
+  height: 500px;
+  background: radial-gradient(circle, rgba(233, 30, 140, 0.1) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.doch-hero-inner {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.doch-hero-title {
+  font-family: var(--font-heading, 'Space Grotesk', sans-serif);
+  font-size: clamp(2.2rem, 5vw, 3.2rem);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.04em;
+  color: var(--text, #f6f6f8);
+  margin-bottom: 1rem;
+}
+
+.doch-hero-title .grad {
+  background: #ff007f;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.doch-hero-sub {
+  font-size: 1.05rem;
+  color: var(--muted, #9aa3b2);
+  max-width: 540px;
+  line-height: 1.6;
+  margin-bottom: 2rem;
+}
+
+.doch-hero-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 2rem;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.doch-search {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  max-width: 480px;
+  padding: 0.7rem 1rem;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.doch-search.focused {
+  border-color: rgba(233, 30, 140, 0.3);
+  box-shadow: 0 0 20px rgba(233, 30, 140, 0.06);
+}
+
+.doch-search-icon {
+  color: var(--muted, #9aa3b2);
+  flex-shrink: 0;
+}
+
+.doch-search-input {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text, #f6f6f8);
+  font-size: 0.9rem;
+}
+
+.doch-search-input::placeholder {
+  color: var(--muted, #9aa3b2);
+  opacity: 0.6;
+}
+
+.doch-search-kbd {
+  font-size: 0.7rem;
+  padding: 0.2rem 0.45rem;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--muted, #9aa3b2);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  flex-shrink: 0;
+}
+
+/* ─── Quickstart Cards ──────────────────────────────────────────────── */
+
+.doch-section {
+  padding: 2rem 0;
+}
+
+.doch-section-title {
+  font-family: var(--font-heading, 'Space Grotesk', sans-serif);
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--text, #f6f6f8);
+  margin-bottom: 1rem;
+}
+
+.doch-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+.doch-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 1.5rem;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(20px);
+  text-decoration: none;
+  transition: border-color 0.25s, box-shadow 0.25s, transform 0.2s;
+}
+
+.doch-card:hover {
+  border-color: rgba(233, 30, 140, 0.25);
+  box-shadow: 0 0 40px rgba(233, 30, 140, 0.08);
+  transform: translateY(-2px);
+}
+
+.doch-card-icon {
+  color: var(--pink, #ff007f);
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: rgba(233, 30, 140, 0.1);
+}
+
+.doch-card-title {
+  font-family: var(--font-heading, 'Space Grotesk', sans-serif);
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text, #f6f6f8);
+}
+
+.doch-card-desc {
+  font-size: 0.85rem;
+  color: var(--muted, #9aa3b2);
+  line-height: 1.5;
+  flex: 1;
+}
+
+.doch-card-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--pink, #ff007f);
+  transition: gap 0.2s;
+}
+
+.doch-card:hover .doch-card-link {
+  gap: 0.5rem;
+}
+
+/* ─── Changelog ─────────────────────────────────────────────────────── */
+
+.doch-changelog {
+  display: flex;
+  flex-direction: column;
+}
+
+.doch-changelog-item {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  text-decoration: none;
+  transition: background 0.15s;
+  border-radius: 6px;
+}
+
+.doch-changelog-item:last-child {
+  border-bottom: none;
+}
+
+.doch-changelog-item:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.doch-changelog-date {
+  font-size: 0.75rem;
+  color: var(--muted, #9aa3b2);
+  white-space: nowrap;
+  min-width: 90px;
+}
+
+.doch-changelog-text {
+  font-size: 0.85rem;
+  color: var(--text, #f6f6f8);
+  flex: 1;
+}
+
+.doch-changelog-arrow {
+  color: var(--muted, #9aa3b2);
+  opacity: 0;
+  transition: opacity 0.2s;
+  flex-shrink: 0;
+}
+
+.doch-changelog-item:hover .doch-changelog-arrow {
+  opacity: 1;
+}
+
+/* ─── Responsive ────────────────────────────────────────────────────── */
+
+@media (max-width: 640px) {
+  .doch-cards-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .doch-changelog-date {
+    min-width: auto;
+  }
+}
