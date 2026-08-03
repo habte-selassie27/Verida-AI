@@ -50,12 +50,16 @@ export default function Revenue() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!isAuthenticated || !address) {
+    if (!address) {
       setLoading(false);
       return;
     }
 
     const fetchRevenue = async () => {
+      if (!isAuthenticated) {
+        setLoading(false);
+        return;
+      }
       try {
         const token = localStorage.getItem('verida_auth_token');
         const res = await fetch(`${API_BASE}/api/publishers/${address}/revenue`, {
@@ -118,7 +122,7 @@ export default function Revenue() {
     fetchOnChainData();
   }, [address]);
 
-  if (!isAuthenticated || !address) {
+  if (!address) {
     return (
       <div className="rev">
         <h1 className="rev-title">Revenue</h1>

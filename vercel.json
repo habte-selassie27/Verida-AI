@@ -4,7 +4,8 @@
   "framework": "vite",
   "installCommand": "npm install",
   "env": {
-    "VITE_API_URL": "https://verida-api-5ruj.onrender.com"
+    "VITE_API_URL": "https://verida-api-5ruj.onrender.com",
+    "VITE_MARKETPLACE_CONTRACT_ADDRESS": "0x141a8b5da194f039af93bdb7df81824a506fe73cade01138d2309aa7d497fddd"
   },
   "rewrites": [
     {

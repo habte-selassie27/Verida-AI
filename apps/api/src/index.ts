@@ -38,6 +38,8 @@ import { publishersRouter } from './routes/publishers.js';
 import { createUploadProgressWebSocketServer } from './routes/wsUploadProgress.js';
 import { getEscrowKeeperStats, startEscrowKeeper, type EscrowKeeperHandle } from './lib/contracts/escrowKeeper.js';
 
+import { adminRouter } from './routes/admin.js';
+
 const app = express();
 
 void UploadWorker;
@@ -146,6 +148,8 @@ app.get('/api/stats/live', asyncHandler(async (_request: Request, response: Resp
 app.get('/api/keeper/status', asyncHandler(async (_request: Request, response: Response): Promise<void> => {
   response.json({ data: getEscrowKeeperStats(), success: true });
 }));
+
+app.use('/api', adminRouter);
 
 app.use('/api', generalRateLimit);
 
