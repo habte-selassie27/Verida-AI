@@ -292,9 +292,11 @@ router.post('/admin/seed', async (req, res) => {
       message: `Seeded ${DEMO_DATASETS.length} datasets across ${DEMO_PUBLISHERS.length} publishers.`,
       success: true,
     });
-  } catch (err) {
+  } catch (err: unknown) {
     console.error('[Seed] Error:', err);
-    res.status(500).json({ error: err instanceof Error ? err.message : 'Seed failed', success: false });
+    const message = err instanceof Error ? err.message : String(err);
+    const cause = err && typeof err === 'object' && 'cause' in err ? String((err as { cause: unknown }).cause) : '';
+    res.status(500).json({ error: message, cause, success: false });
   }
 });
 
