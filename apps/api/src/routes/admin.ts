@@ -7,9 +7,10 @@ import type { AccessType, DatasetModality, DatasetTag, SchemaProfile } from '@ve
 const router = Router();
 
 const SEED_SECRET = process.env.SEED_SECRET ?? 'verida-seed-2025';
+const ADMIN_WALLET = process.env.VITE_MARKETPLACE_CONTRACT_ADDRESS ?? '0x141a8b5da194f039af93bdb7df81824a506fe73cade01138d2309aa7d497fddd';
 
 const DEMO_PUBLISHERS = [
-  { address: '0x1a2b3c4d5e6f7890abcdef1234567890abcdef12', username: 'AI Research Lab', bio: 'Leading AI research organization publishing high-quality training datasets.' },
+  { address: ADMIN_WALLET, username: 'Verida Admin', bio: 'Platform administrator and primary dataset publisher.' },
   { address: '0x2b3c4d5e6f7890abcdef1234567890abcdef1234', username: 'DataForge', bio: 'Curating and publishing verified datasets for machine learning.' },
   { address: '0x3c4d5e6f7890abcdef1234567890abcdef123456', username: 'OpenData Collective', bio: 'Open-source data initiatives for the AI community.' },
 ];
@@ -43,7 +44,7 @@ const DEMO_DATASETS = [
     ai_description: 'Filtered Common Crawl subset with 2.1TB of deduplicated, quality-scored web text.',
     schema_profile: { modality: 'text', format: 'text', columns: [{ name: 'text', inferredType: 'string', nullRate: 0, cardinality: 1000000, semanticCategory: 'text' }], estimatedRowCount: 500000000 } as SchemaProfile,
     suggested_tags: ['language-model', 'pretraining', 'web-text', 'corpus'],
-    publisher_idx: 1,
+    publisher_idx: 0,
   },
   {
     name: 'Medical X-Ray Dataset',
@@ -77,7 +78,7 @@ const DEMO_DATASETS = [
       { name: 'close', inferredType: 'float', nullRate: 0, cardinality: 50000, semanticCategory: 'numeric' },
     ], estimatedRowCount: 12500000 } as SchemaProfile,
     suggested_tags: ['quantitative-finance', 'time-series', 'market-analysis', 'trading'],
-    publisher_idx: 1,
+    publisher_idx: 0,
   },
   {
     name: 'Speech Commands v3',
@@ -92,7 +93,7 @@ const DEMO_DATASETS = [
     ai_description: 'Large-scale speech command dataset with 305,000 one-second audio clips covering 35 common commands.',
     schema_profile: null,
     suggested_tags: ['speech-recognition', 'keyword-spotting', 'voice-assistant', 'audio-classification'],
-    publisher_idx: 2,
+    publisher_idx: 0,
   },
   {
     name: 'CodeContests+ Training Data',
@@ -107,7 +108,7 @@ const DEMO_DATASETS = [
     ai_description: 'Curated dataset of 150,000 competitive programming problems with verified multi-language solutions.',
     schema_profile: null,
     suggested_tags: ['code-generation', 'algorithmic-reasoning', 'programming', 'software-engineering'],
-    publisher_idx: 2,
+    publisher_idx: 0,
   },
   {
     name: 'Satellite Urban Segmentation',
@@ -137,7 +138,7 @@ const DEMO_DATASETS = [
     ai_description: 'Comprehensive multimodal benchmark with 50,000 problems requiring joint reasoning over text, images, and tables.',
     schema_profile: null,
     suggested_tags: ['multimodal-ai', 'reasoning', 'benchmark', 'evaluation'],
-    publisher_idx: 1,
+    publisher_idx: 0,
   },
   {
     name: 'Synthetic Patient Data',
@@ -156,7 +157,7 @@ const DEMO_DATASETS = [
       { name: 'diagnosis_code', inferredType: 'string', nullRate: 0.05, cardinality: 500, semanticCategory: 'category' },
     ], estimatedRowCount: 1000000 } as SchemaProfile,
     suggested_tags: ['synthetic-data', 'differential-privacy', 'healthcare', 'data-augmentation'],
-    publisher_idx: 2,
+    publisher_idx: 0,
   },
   {
     name: 'YouTube-8M Lite',
@@ -186,7 +187,7 @@ const DEMO_DATASETS = [
     ai_description: 'Specialized NER dataset for legal document processing with 25,000 annotated contracts.',
     schema_profile: null,
     suggested_tags: ['legal-ai', 'named-entity-recognition', 'contract-analysis', 'nlp'],
-    publisher_idx: 1,
+    publisher_idx: 0,
   },
   {
     name: 'Climate Sensor Network',
@@ -205,7 +206,7 @@ const DEMO_DATASETS = [
       { name: 'temperature_c', inferredType: 'float', nullRate: 0.02, cardinality: 500, semanticCategory: 'numeric' },
     ], estimatedRowCount: 87600000 } as SchemaProfile,
     suggested_tags: ['climate-modeling', 'weather-forecasting', 'environmental-ai', 'time-series'],
-    publisher_idx: 2,
+    publisher_idx: 0,
   },
 ];
 
@@ -219,8 +220,9 @@ router.post('/admin/seed', async (req, res) => {
 
     const [existingCount] = await db.select({ count: sql<number>`count(*)` }).from(datasets);
     if (Number(existingCount?.count ?? 0) > 0) {
-      res.json({ message: `Database already has ${existingCount?.count} datasets. Skipping.`, success: true });
-      return;
+      // Clear existing data and re-seed with correct publisher
+      await db.execute(sql`DELETE FROM datasets`);
+      await db.execute(sql`DELETE FROM publishers`);
     }
 
     // Fix schema mismatches on older Render databases
