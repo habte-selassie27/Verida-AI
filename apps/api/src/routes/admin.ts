@@ -223,6 +223,11 @@ router.post('/admin/seed', async (req, res) => {
       return;
     }
 
+    // Fix schema mismatches on older Render databases
+    await db.execute(sql`ALTER TABLE datasets ALTER COLUMN size_bytes TYPE bigint`);
+    await db.execute(sql`ALTER TABLE datasets ALTER COLUMN price_per_access TYPE bigint`);
+    await db.execute(sql`ALTER TABLE publishers ALTER COLUMN total_earnings TYPE bigint`);
+
     for (const pub of DEMO_PUBLISHERS) {
       await db.insert(publishers).values({
         address: pub.address,
