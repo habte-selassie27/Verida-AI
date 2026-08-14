@@ -218,6 +218,48 @@ export async function checkDatasetAccessBatch(
   return data.access;
 }
 
+export interface OnChainActionResult {
+  datasetId: number;
+  txHash: string;
+  accessor?: string;
+}
+
+// Publisher on-chain actions are signed SERVER-SIDE with the platform account
+// (SHELBY_SIGNER_PRIVATE_KEY), so they land on the configured Aptos network
+// even when the browser wallet is on a different network.
+export async function grantDatasetAccess(
+  datasetId: number,
+  accessor: string,
+  durationSeconds: number,
+  callerAddress: string,
+): Promise<OnChainActionResult> {
+  return request<OnChainActionResult>(`/api/datasets/${datasetId}/grant-access`, {
+    method: 'POST',
+    body: JSON.stringify({ accessor, callerAddress, durationSeconds }),
+  });
+}
+
+export async function revokeDatasetAccess(
+  datasetId: number,
+  accessor: string,
+  callerAddress: string,
+): Promise<OnChainActionResult> {
+  return request<OnChainActionResult>(`/api/datasets/${datasetId}/revoke-access`, {
+    method: 'POST',
+    body: JSON.stringify({ accessor, callerAddress }),
+  });
+}
+
+export async function registerDatasetOwnership(
+  datasetId: number,
+  callerAddress: string,
+): Promise<OnChainActionResult> {
+  return request<OnChainActionResult>(`/api/datasets/${datasetId}/register-ownership`, {
+    method: 'POST',
+    body: JSON.stringify({ callerAddress }),
+  });
+}
+
 export async function verifyDataset(id: number): Promise<{ jobId: string }> {
   const token = getStoredToken();
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };

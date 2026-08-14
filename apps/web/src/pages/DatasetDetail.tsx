@@ -9,7 +9,7 @@ import { Button } from '../components/ui/Button';
 import { Skeleton } from '../components/ui/Skeleton';
 import { TagPill } from '../components/ui/TagPill';
 import { ProvenanceTree } from '../components/ProvenanceTree';
-import { getDataset, createAccessSession, verifyDataset, getSimilarDatasets, getStreamUrl, addDatasetVersion, createEscrowEntry, updateEscrowStatus, checkDatasetAccess, getDatasetPreview } from '../api/client';
+import { getDataset, createAccessSession, verifyDataset, getSimilarDatasets, getStreamUrl, addDatasetVersion, createEscrowEntry, updateEscrowStatus, checkDatasetAccess, getDatasetPreview, grantDatasetAccess, revokeDatasetAccess, registerDatasetOwnership } from '../api/client';
 import type { DatasetDetailResponse, SimilarDataset } from '../api/client';
 import { useWalletContext } from '../context/WalletContext';
 import { useAuth } from '../context/AuthContext';
@@ -621,14 +621,10 @@ export default function DatasetDetail() {
   };
 
   const handleRegisterOnChain = async () => {
-    if (!id || !connected) return;
+    if (!id || !address) return;
     try {
-      await signAndSubmitTransaction({
-        data: {
-          function: `${MARKETPLACE_CONTRACT_ADDRESS}::ownership::register_dataset`,
-          functionArguments: [Number(id)],
-        },
-      });
+      const result = await registerDatasetOwnership(Number(id), address);
+      alert(`✓ Ownership registered on-chain\nTx: ${result.txHash.slice(0, 18)}…`);
       fetchDetail();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -657,7 +653,7 @@ export default function DatasetDetail() {
   };
 
   const handleGrantAccess = async () => {
-    if (!id || !connected) return;
+    if (!id || !address) return;
     const accessor = prompt('Enter the wallet address to grant access to:');
     if (!accessor || !accessor.startsWith('0x')) return;
     const durationStr = prompt('Access duration in seconds (e.g. 86400 for 1 day):', '604800');
@@ -666,31 +662,21 @@ export default function DatasetDetail() {
     if (isNaN(duration) || duration <= 0) return;
 
     try {
-      await signAndSubmitTransaction({
-        data: {
-          function: `${MARKETPLACE_CONTRACT_ADDRESS}::access::grant_access`,
-          functionArguments: [accessor, Number(id), duration],
-        },
-      });
-      alert('Access granted on-chain');
+      const result = await grantDatasetAccess(Number(id), accessor, duration, address);
+      alert(`✓ Access granted on-chain\nAccessor: ${accessor}\nTx: ${result.txHash.slice(0, 18)}…`);
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to grant access');
     }
   };
 
   const handleRevokeAccess = async () => {
-    if (!id || !connected) return;
+    if (!id || !address) return;
     const accessor = prompt('Enter the wallet address to revoke access from:');
     if (!accessor || !accessor.startsWith('0x')) return;
 
     try {
-      await signAndSubmitTransaction({
-        data: {
-          function: `${MARKETPLACE_CONTRACT_ADDRESS}::access::revoke_access`,
-          functionArguments: [accessor, Number(id)],
-        },
-      });
-      alert('Access revoked on-chain');
+      const result = await revokeDatasetAccess(Number(id), accessor, address);
+      alert(`✓ Access revoked on-chain\nAccessor: ${accessor}\nTx: ${result.txHash.slice(0, 18)}…`);
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to revoke access');
     }

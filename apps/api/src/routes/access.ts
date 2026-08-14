@@ -351,10 +351,13 @@ accessRouter.get(
       .limit(1);
     const session = sessionRows.at(0);
 
-    // Free datasets are always accessible; paid datasets are unlocked once the
-    // wallet has any session for them (sessions are only ever created after a
-    // verified payment for pay-per-access datasets).
-    const hasAccess = dataset.accessType === 'free' || session !== undefined;
+    // Check on-chain grants as fallback when no DB session exists.
+    // grant_access writes to the Move AccessRegistry; we must verify it there.
+    const onChainResult = await checkOnChainAccess(walletAddress, datasetId);
+
+    // Free datasets are always accessible; paid datasets are unlocked if the
+    // wallet has a DB session OR an on-chain grant.
+    const hasAccess = dataset.accessType === 'free' || session !== undefined || onChainResult.hasAccess;
 
     // Only ever expose the session id to an authenticated caller.
     let activeSession: { expiresAt: number; sessionId: string } | null = null;
@@ -435,8 +438,14 @@ accessRouter.post(
 
     const access: Record<number, { active: boolean; hasAccess: boolean }> = {};
     for (const datasetRow of datasetRows) {
+      const hasDbAccess = sessionDatasetIds.has(datasetRow.id);
+      const hasFreeAccess = datasetRow.accessType === 'free';
+      const hasOnChainAccess = !hasDbAccess && !hasFreeAccess
+        ? (await checkOnChainAccess(authenticatedAddress, datasetRow.id)).hasAccess
+        : false;
+
       access[datasetRow.id] = {
-        hasAccess: datasetRow.accessType === 'free' || sessionDatasetIds.has(datasetRow.id),
+        hasAccess: hasFreeAccess || hasDbAccess || hasOnChainAccess,
         active: activeDatasetIds.has(datasetRow.id),
       };
     }

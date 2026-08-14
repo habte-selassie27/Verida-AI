@@ -34,6 +34,11 @@ import { readBlobBytes, PREVIEW_MAX_READ_BYTES, ShelbyAccessError, streamDataset
 import { buildPreviewFromText, PREVIEWABLE_FORMATS } from '../lib/datasetPreview.js';
 import { getAuthenticatedAddress, requireAuth } from '../middleware/auth.js';
 import { generalRateLimit, streamRateLimit, uploadRateLimit } from '../middleware/rateLimit.js';
+import {
+  submitGrantAccess,
+  submitRegisterDataset,
+  submitRevokeAccess,
+} from '../lib/contracts/publisherActions.js';
 
 const accessCountSubquery = db
   .select({
@@ -113,6 +118,26 @@ const MAX_PAGE_SIZE = 100;
 
 const datasetIdParamSchema = z.object({
   id: z.coerce.number().int().positive(),
+});
+
+const accessorAddressSchema = z
+  .string()
+  .trim()
+  .regex(/^0x[0-9a-fA-F]{1,64}$/, 'accessor must be a 0x-prefixed address');
+
+const grantAccessBodySchema = z.object({
+  accessor: accessorAddressSchema,
+  callerAddress: z.string().trim().min(1),
+  durationSeconds: z.coerce.number().int().positive().max(10 * 365 * 24 * 60 * 60),
+});
+
+const revokeAccessBodySchema = z.object({
+  accessor: accessorAddressSchema,
+  callerAddress: z.string().trim().min(1),
+});
+
+const registerOwnershipBodySchema = z.object({
+  callerAddress: z.string().trim().min(1),
 });
 
 const listQuerySchema = z.object({
@@ -384,6 +409,34 @@ function createUploadMetadataFromBody(input: UploadBodyInput): UploadDatasetMeta
   }
 
   return metadata;
+}
+
+async function requireDatasetOwner(datasetId: number, callerAddress: string): Promise<void> {
+  const rows = await db
+    .select({
+      publisherAddress: datasets.publisherAddress,
+    })
+    .from(datasets)
+    .where(eq(datasets.id, datasetId))
+    .limit(1);
+
+  const datasetRow = rows.at(0);
+
+  if (datasetRow === undefined) {
+    throw new ApiRouteError({
+      code: 'DATASET_NOT_FOUND',
+      message: `Dataset ${datasetId} was not found.`,
+      statusCode: 404,
+    });
+  }
+
+  if (datasetRow.publisherAddress.toLowerCase() !== callerAddress.toLowerCase()) {
+    throw new ApiRouteError({
+      code: 'NOT_DATASET_OWNER',
+      message: 'Only the dataset owner can perform this on-chain action.',
+      statusCode: 403,
+    });
+  }
 }
 
 async function ensureDatasetExists(datasetId: number): Promise<void> {
@@ -1071,6 +1124,120 @@ datasetsRouter.post(
       },
       success: true,
     });
+  }),
+);
+
+// POST /api/datasets/:id/grant-access — server-signed on-chain grant_access.
+// Signed with SHELBY_SIGNER_PRIVATE_KEY so it lands on the configured Aptos
+// network regardless of which network the caller's browser wallet is on.
+datasetsRouter.post(
+  '/:id/grant-access',
+  generalRateLimit,
+  asyncHandler(async (request: Request, response: Response): Promise<void> => {
+    const datasetId = parseRouteDatasetId(request);
+    const parsed = grantAccessBodySchema.safeParse(request.body);
+
+    if (!parsed.success) {
+      throw new ApiRouteError({
+        code: 'INVALID_BODY',
+        details: { issues: parsed.error.issues },
+        message: 'Invalid grant-access payload.',
+        statusCode: 400,
+      });
+    }
+
+    await requireDatasetOwner(datasetId, parsed.data.callerAddress);
+
+    try {
+      const txHash = await submitGrantAccess(
+        parsed.data.accessor,
+        datasetId,
+        parsed.data.durationSeconds,
+      );
+      response.json({
+        data: { accessor: parsed.data.accessor, datasetId, txHash },
+        success: true,
+      });
+    } catch (cause: unknown) {
+      throw new ApiRouteError({
+        code: 'ON_CHAIN_GRANT_FAILED',
+        details: { cause: cause instanceof Error ? cause.message : String(cause) },
+        message: cause instanceof Error ? cause.message : 'On-chain grant failed.',
+        statusCode: 502,
+      });
+    }
+  }),
+);
+
+// POST /api/datasets/:id/revoke-access — server-signed on-chain revoke_access.
+datasetsRouter.post(
+  '/:id/revoke-access',
+  generalRateLimit,
+  asyncHandler(async (request: Request, response: Response): Promise<void> => {
+    const datasetId = parseRouteDatasetId(request);
+    const parsed = revokeAccessBodySchema.safeParse(request.body);
+
+    if (!parsed.success) {
+      throw new ApiRouteError({
+        code: 'INVALID_BODY',
+        details: { issues: parsed.error.issues },
+        message: 'Invalid revoke-access payload.',
+        statusCode: 400,
+      });
+    }
+
+    await requireDatasetOwner(datasetId, parsed.data.callerAddress);
+
+    try {
+      const txHash = await submitRevokeAccess(parsed.data.accessor, datasetId);
+      response.json({
+        data: { accessor: parsed.data.accessor, datasetId, txHash },
+        success: true,
+      });
+    } catch (cause: unknown) {
+      throw new ApiRouteError({
+        code: 'ON_CHAIN_REVOKE_FAILED',
+        details: { cause: cause instanceof Error ? cause.message : String(cause) },
+        message: cause instanceof Error ? cause.message : 'On-chain revoke failed.',
+        statusCode: 502,
+      });
+    }
+  }),
+);
+
+// POST /api/datasets/:id/register-ownership — server-signed ownership::register_dataset.
+datasetsRouter.post(
+  '/:id/register-ownership',
+  generalRateLimit,
+  asyncHandler(async (request: Request, response: Response): Promise<void> => {
+    const datasetId = parseRouteDatasetId(request);
+    const parsed = registerOwnershipBodySchema.safeParse(request.body);
+
+    if (!parsed.success) {
+      throw new ApiRouteError({
+        code: 'INVALID_BODY',
+        details: { issues: parsed.error.issues },
+        message: 'Invalid register-ownership payload.',
+        statusCode: 400,
+      });
+    }
+
+    await requireDatasetOwner(datasetId, parsed.data.callerAddress);
+
+    try {
+      const txHash = await submitRegisterDataset(datasetId);
+      response.json({
+        data: { datasetId, txHash },
+        success: true,
+      });
+    } catch (cause: unknown) {
+      throw new ApiRouteError({
+        code: 'ON_CHAIN_REGISTER_FAILED',
+        details: { cause: cause instanceof Error ? cause.message : String(cause) },
+        message: cause instanceof Error ? cause.message : 'On-chain registration failed.',
+        statusCode: 502,
+      });
+    }
   }),
 );
 
