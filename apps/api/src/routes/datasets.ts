@@ -30,9 +30,10 @@ import {
 } from '../lib/queue/queue.js';
 import { embedText } from '../ai/serving/client.js';
 import { cosineSimilarity } from '../ai/serving/similarity.js';
-import { ShelbyAccessError, streamDataset, validateSession } from '../lib/shelby/index.js';
+import { readBlobBytes, PREVIEW_MAX_READ_BYTES, ShelbyAccessError, streamDataset, validateSession } from '../lib/shelby/index.js';
+import { buildPreviewFromText, PREVIEWABLE_FORMATS } from '../lib/datasetPreview.js';
 import { getAuthenticatedAddress, requireAuth } from '../middleware/auth.js';
-import { streamRateLimit, uploadRateLimit } from '../middleware/rateLimit.js';
+import { generalRateLimit, streamRateLimit, uploadRateLimit } from '../middleware/rateLimit.js';
 
 const accessCountSubquery = db
   .select({
@@ -1119,6 +1120,81 @@ datasetsRouter.get(
       data: { results, sourceDatasetId: datasetId, sourceModality: target.modality },
       success: true,
     });
+  }),
+);
+
+// GET /api/datasets/:id/preview — real first-5-rows preview for tabular files.
+// Reads only the first PREVIEW_MAX_READ_BYTES of the blob (never the full
+// file), so pay-per-access datasets expose just a sample, like every
+// marketplace does. Non-tabular files (text, images, PDFs, …) return
+// previewable:false and the UI hides the table.
+datasetsRouter.get(
+  '/:id/preview',
+  generalRateLimit,
+  asyncHandler(async (request: Request, response: Response): Promise<void> => {
+    const datasetId = parseRouteDatasetId(request);
+
+    const rows = await db
+      .select({
+        id: datasets.id,
+        schemaProfile: datasets.schemaProfile,
+        shelbyBlobId: datasets.shelbyBlobId,
+      })
+      .from(datasets)
+      .where(eq(datasets.id, datasetId))
+      .limit(1);
+
+    const datasetRow = rows.at(0);
+
+    if (datasetRow === undefined) {
+      throw new ApiRouteError({
+        code: 'DATASET_NOT_FOUND',
+        message: `Dataset ${datasetId} was not found.`,
+        statusCode: 404,
+      });
+    }
+
+    const format = datasetRow.schemaProfile?.format?.toLowerCase().trim() ?? null;
+    const emptyPreview = { previewable: false, format, columns: [], rows: [] };
+
+    if (format === null || !PREVIEWABLE_FORMATS.has(format)) {
+      response.json({ data: emptyPreview, success: true });
+      return;
+    }
+
+    try {
+      const bytes = await readBlobBytes(datasetRow.shelbyBlobId, PREVIEW_MAX_READ_BYTES);
+
+      // Binary blobs (parquet, images, …) mislabeled as text would produce
+      // garbage — a NUL byte in the prefix is a reliable binary signal.
+      if (bytes.subarray(0, 1024).includes(0)) {
+        response.json({ data: emptyPreview, success: true });
+        return;
+      }
+
+      const preview = buildPreviewFromText(bytes.toString('utf-8'), format);
+
+      if (preview === null) {
+        response.json({ data: emptyPreview, success: true });
+        return;
+      }
+
+      response.json({ data: preview, success: true });
+    } catch (cause: unknown) {
+      // Preview is a nice-to-have: never fail the dataset page because it
+      // couldn't be built (e.g. blob unreachable). Degrade gracefully.
+      console.warn(
+        `[datasets] preview failed for dataset ${datasetId}:`,
+        cause instanceof Error ? cause.message : cause,
+      );
+      response.json({
+        data: {
+          ...emptyPreview,
+          reason: cause instanceof Error ? cause.message : 'unavailable',
+        },
+        success: true,
+      });
+    }
   }),
 );
 

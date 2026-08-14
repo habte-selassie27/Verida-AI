@@ -179,6 +179,20 @@ export interface DatasetAccessStatus {
   session: { sessionId: string; expiresAt: number } | null;
 }
 
+export interface DatasetPreview {
+  previewable: boolean;
+  format: string | null;
+  columns: string[];
+  rows: (string | null)[][];
+}
+
+export async function getDatasetPreview(id: number): Promise<DatasetPreview> {
+  // No auth needed — the preview is a tiny sample (first 5 rows) of the blob,
+  // shown publicly like any marketplace. Non-tabular datasets return
+  // previewable:false and the UI hides the table.
+  return request<DatasetPreview>(`/api/datasets/${id}/preview`);
+}
+
 export async function checkDatasetAccess(datasetId: number, wallet?: string): Promise<DatasetAccessStatus> {
   // With a wallet address the check works WITHOUT a login (identity is the
   // public wallet address). Without it, the JWT is used and the active session

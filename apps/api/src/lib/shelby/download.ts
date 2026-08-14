@@ -9,6 +9,10 @@ import { Readable } from 'node:stream';
 
 import { getShelbyRuntime, parseBlobId, ShelbyStreamError } from './client.js';
 
+// Maximum number of bytes a preview read will pull from storage. Preview reads
+// only need the first few rows, so a small cap keeps the request cheap.
+export const PREVIEW_MAX_READ_BYTES = 256 * 1024;
+
 interface ShelbyDownloadBlobLike {
   readable?: unknown;
   stream?: unknown;
@@ -56,19 +60,23 @@ function toNodeReadable(value: unknown): Readable {
   throw new ShelbyStreamError('Shelby returned a blob stream that cannot be converted to a Node.js Readable.');
 }
 
+async function downloadBlob(blobId: string): Promise<unknown> {
+  const runtime = await getShelbyRuntime();
+  const { accountAddress, blobName } = await parseBlobId(blobId);
+
+  return runtime.client.download({
+    account: accountAddress,
+    blobName,
+  });
+}
+
 export async function streamDataset(blobId: string, sessionId: string): Promise<Readable> {
   try {
     if (sessionId.trim().length === 0) {
       throw new ShelbyStreamError('sessionId is required to stream a Shelby blob.');
     }
 
-    const runtime = await getShelbyRuntime();
-    const { accountAddress, blobName } = await parseBlobId(blobId);
-    const blob = (await runtime.client.download({
-      account: accountAddress,
-      blobName,
-    })) as ShelbyDownloadBlobLike;
-
+    const blob = (await downloadBlob(blobId)) as ShelbyDownloadBlobLike;
     const readableSource = blob.readable ?? blob.stream;
 
     if (readableSource === undefined) {
@@ -82,5 +90,52 @@ export async function streamDataset(blobId: string, sessionId: string): Promise<
     }
 
     throw new ShelbyStreamError(`Failed to stream Shelby blob ${blobId}.`, { cause });
+  }
+}
+
+/**
+ * Reads up to `maxBytes` from a Shelby blob and returns the raw bytes. Unlike
+ * `streamDataset`, this does NOT require an access session: it is used for the
+ * public dataset preview (first few rows), which only touches a tiny prefix of
+ * the blob and never the full file.
+ */
+export async function readBlobBytes(blobId: string, maxBytes: number): Promise<Buffer> {
+  try {
+    const blob = (await downloadBlob(blobId)) as ShelbyDownloadBlobLike;
+    const readableSource = blob.readable ?? blob.stream;
+
+    if (readableSource === undefined) {
+      throw new ShelbyStreamError('Shelby did not return a readable stream for the requested blob.');
+    }
+
+    const readable = toNodeReadable(readableSource);
+    const chunks: Buffer[] = [];
+    let total = 0;
+
+    for await (const chunk of readable) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
+      const remaining = maxBytes - total;
+
+      if (remaining <= 0) {
+        break;
+      }
+
+      if (buffer.byteLength <= remaining) {
+        chunks.push(buffer);
+        total += buffer.byteLength;
+      } else {
+        chunks.push(buffer.subarray(0, remaining));
+        total += remaining;
+        break;
+      }
+    }
+
+    return Buffer.concat(chunks, total);
+  } catch (cause: unknown) {
+    if (cause instanceof ShelbyStreamError) {
+      throw cause;
+    }
+
+    throw new ShelbyStreamError(`Failed to read Shelby blob ${blobId} for preview.`, { cause });
   }
 }

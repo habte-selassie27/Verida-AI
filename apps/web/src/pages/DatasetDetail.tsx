@@ -9,7 +9,7 @@ import { Button } from '../components/ui/Button';
 import { Skeleton } from '../components/ui/Skeleton';
 import { TagPill } from '../components/ui/TagPill';
 import { ProvenanceTree } from '../components/ProvenanceTree';
-import { getDataset, createAccessSession, verifyDataset, getSimilarDatasets, getStreamUrl, addDatasetVersion, createEscrowEntry, updateEscrowStatus, checkDatasetAccess } from '../api/client';
+import { getDataset, createAccessSession, verifyDataset, getSimilarDatasets, getStreamUrl, addDatasetVersion, createEscrowEntry, updateEscrowStatus, checkDatasetAccess, getDatasetPreview } from '../api/client';
 import type { DatasetDetailResponse, SimilarDataset } from '../api/client';
 import { useWalletContext } from '../context/WalletContext';
 import { useAuth } from '../context/AuthContext';
@@ -292,6 +292,13 @@ export default function DatasetDetail() {
   // Permanent entitlement — once this wallet has paid for the dataset it is
   // never charged again, even after a session expires.
   const [hasPaidAccess, setHasPaidAccess] = useState(false);
+  // Real first-5-rows preview fetched from the backend (only exists for
+  // tabular files; text/docs/images return nothing and the table is hidden).
+  const [preview, setPreview] = useState<{
+    format: string | null;
+    columns: string[];
+    rows: (string | null)[][];
+  } | null>(null);
   const [verifyLoading, setVerifyLoading] = useState(false);
   const [relatedDatasets, setRelatedDatasets] = useState<SimilarDataset[]>([]);
   const [relatedLoading, setRelatedLoading] = useState(false);
@@ -356,6 +363,27 @@ export default function DatasetDetail() {
   useEffect(() => {
     fetchDetail();
   }, [fetchDetail]);
+
+  // Fetch the real first-5-rows preview. The backend only produces one for
+  // tabular files (CSV/TSV/JSON/JSONL); for anything else it returns
+  // previewable:false and we leave the section hidden.
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    getDatasetPreview(Number(id))
+      .then((result) => {
+        if (cancelled) return;
+        if (result.previewable && result.columns.length > 0) {
+          setPreview({ format: result.format, columns: result.columns, rows: result.rows });
+        }
+      })
+      .catch(() => {
+        // Preview is optional — never break the dataset page over it.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
 
   // Close any in-flight version-upload progress socket on unmount.
   useEffect(() => {
@@ -928,15 +956,6 @@ export default function DatasetDetail() {
 
   const chainIntact = verifStatus !== 'tampered';
 
-  const previewColumns = ['col_a', 'col_b', 'col_c', 'col_d', 'col_e', 'col_f', 'col_g', 'col_h'].slice(0, 8);
-  const previewRows = dataset.shelby_blob_id ? [
-    ['0x4a2f...', '0.7834', 'label_A', 'train', '—', '—', '—', '—'],
-    ['0x8b1c...', '0.2156', 'label_B', 'train', '—', '—', '—', '—'],
-    ['0x3d7e...', '0.9921', 'label_A', 'val', '—', '—', '—', '—'],
-    ['0xf4a9...', '0.4502', 'label_C', 'train', '—', '—', '—', '—'],
-    ['0x1e6c...', '0.6348', 'label_B', 'test', '—', '—', '—', '—'],
-  ] : [];
-
   return (
     <div>
       {/* BREADCRUMB */}
@@ -1259,28 +1278,31 @@ export default function DatasetDetail() {
                   </div>
                 </div>
 
-                {/* DATA PREVIEW */}
-                {previewRows.length > 0 && (
+                {/* DATA PREVIEW — real first rows from the blob (tabular only) */}
+                {preview !== null && preview.rows.length > 0 && (
                   <div className="dd-preview-section">
-                    <div className="dd-preview-title">Data Preview — First 5 rows</div>
+                    <div className="dd-preview-title">Data Preview — First {preview.rows.length} {preview.rows.length === 1 ? 'row' : 'rows'}</div>
                     <table className="dd-preview-table">
                       <thead>
                         <tr>
-                          {previewColumns.map((col, i) => (
-                            <th key={i}>{col}</th>
+                          {preview.columns.map((col, i) => (
+                            <th key={i} title={col}>{col}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
-                        {previewRows.map((row, ri) => (
+                        {preview.rows.map((row, ri) => (
                           <tr key={ri}>
                             {row.map((cell, ci) => (
-                              <td key={ci}>{cell}</td>
+                              <td key={ci} title={cell ?? undefined}>{cell ?? '—'}</td>
                             ))}
                           </tr>
                         ))}
                       </tbody>
                     </table>
+                    <div className="dd-preview-note">
+                      Sample of the real file ({preview.format?.toUpperCase() ?? 'tabular'}) — first {preview.rows.length} {preview.rows.length === 1 ? 'row' : 'rows'}
+                    </div>
                   </div>
                 )}
               </div>
