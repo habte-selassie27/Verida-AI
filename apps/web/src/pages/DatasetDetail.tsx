@@ -393,13 +393,15 @@ export default function DatasetDetail() {
   }, [connected, address]);
 
   // Check whether this wallet has already paid for / unlocked the dataset, and
-  // restore a still-active session so they never face the paywall again.
+  // restore a still-active session so they never face the paywall again. The
+  // check is keyed by the public wallet address, so it works without a login
+  // (and survives JWT expiry).
   useEffect(() => {
     let cancelled = false;
     const run = async () => {
-      if (!id || !connected || !address || !isAuthenticated) return;
+      if (!id || !connected || !address) return;
       try {
-        const status = await checkDatasetAccess(Number(id));
+        const status = await checkDatasetAccess(Number(id), address);
         if (cancelled) return;
         setHasPaidAccess(status.hasAccess);
         if (status.session) {
@@ -412,12 +414,12 @@ export default function DatasetDetail() {
           }));
         }
       } catch {
-        // Not authenticated / network error — leave state as-is
+        // Network error — leave state as-is
       }
     };
     void run();
     return () => { cancelled = true; };
-  }, [id, connected, address, isAuthenticated]);
+  }, [id, connected, address]);
 
   const handleVerify = async () => {
     if (!id) return;
@@ -470,6 +472,11 @@ export default function DatasetDetail() {
     setAccessLoading(true);
     setWalletState('processing');
     try {
+      // Granting a session requires a valid JWT — log in first if needed
+      // (entitled or not, the wallet just signs the SIWA message).
+      if (!isAuthenticated) {
+        await authLogin();
+      }
       let txHash: string | undefined;
       let depositEscrowId: number | null = null;
 

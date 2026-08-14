@@ -104,18 +104,20 @@ export default function Marketplace() {
     fetchData();
   }, []);
 
-  // Once the wallet is connected + authenticated, check which paid datasets it
-  // has already unlocked so we never show a paywall for something it owns.
+  // Once a wallet is connected, check which paid datasets it has already
+  // unlocked so we never show a paywall for something it owns. The check is
+  // keyed by the public wallet address, so it works even without a login (and
+  // survives JWT expiry).
   useEffect(() => {
     let cancelled = false;
     const run = async () => {
-      if (!connected || !address || !isAuthenticated) return;
+      if (!connected || !address) return;
       const paidIds = datasets
         .filter(d => d.access_type === AccessType.PAY_PER_ACCESS)
         .map(d => d.id);
       if (paidIds.length === 0) return;
       try {
-        const access = await checkDatasetAccessBatch(paidIds);
+        const access = await checkDatasetAccessBatch(paidIds, address);
         if (cancelled) return;
         setEntitledIds(new Set(
           Object.entries(access)
@@ -123,12 +125,12 @@ export default function Marketplace() {
             .map(([id]) => Number(id)),
         ));
       } catch {
-        // Not authenticated / network error — fall back to the paywall
+        // Network error — fall back to the paywall
       }
     };
     void run();
     return () => { cancelled = true; };
-  }, [connected, address, isAuthenticated, datasets]);
+  }, [connected, address, datasets]);
 
   const verifiedCount = stats?.verified ?? datasets.filter(d => d.verified === true).length;
   const scoredDatasets = datasets.filter(d => d.quality_score !== null && d.quality_score > 0);

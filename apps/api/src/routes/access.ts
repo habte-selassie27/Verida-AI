@@ -7,7 +7,7 @@
 
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
-import { Router, type Request, type Response } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import asyncHandler from 'express-async-handler';
 import { z } from 'zod';
 
@@ -32,6 +32,7 @@ const accessRequestBodySchema = z.object({
 
 const accessCheckBodySchema = z.object({
   datasetIds: z.array(z.coerce.number().int().positive()).min(1).max(100),
+  walletAddress: z.string().trim().min(2).max(66),
 });
 
 const sessionIdParamSchema = z.object({
@@ -295,14 +296,25 @@ accessRouter.post(
 );
 
 // GET /api/datasets/:id/access — entitlement check for the authenticated wallet.
-// Returns whether the wallet is entitled (has paid / previously accessed) and
-// the currently active session, if any.
+// Supports an optional ?wallet= query param that returns hasAccess WITHOUT
+// authentication (the result is keyed by the public wallet address and only
+// reveals whether that wallet paid). Session ids are only returned to an
+// authenticated caller.
 accessRouter.get(
   '/datasets/:id/access',
-  requireAuth,
+  (request: Request, response: Response, next: NextFunction): void => {
+    const walletParam = typeof request.query.wallet === 'string' ? request.query.wallet.trim() : '';
+    if (walletParam.length > 0) {
+      next();
+      return;
+    }
+    requireAuth(request, response, next);
+  },
   asyncHandler(async (request: Request, response: Response): Promise<void> => {
     const datasetId = parseDatasetId(request);
-    const authenticatedAddress = getAuthenticatedAddress(request);
+    const walletParam = typeof request.query.wallet === 'string' ? request.query.wallet.trim() : '';
+    const isAuthenticatedCheck = walletParam.length === 0;
+    const walletAddress = (walletParam || getAuthenticatedAddress(request)).toLowerCase();
 
     const datasetRows = await db
       .select({
@@ -332,7 +344,7 @@ accessRouter.get(
       .where(
         and(
           eq(accessSessions.datasetId, datasetId),
-          eq(accessSessions.accessorAddress, authenticatedAddress),
+          eq(accessSessions.accessorAddress, walletAddress),
         ),
       )
       .orderBy(desc(accessSessions.createdAt))
@@ -344,8 +356,10 @@ accessRouter.get(
     // verified payment for pay-per-access datasets).
     const hasAccess = dataset.accessType === 'free' || session !== undefined;
 
+    // Only ever expose the session id to an authenticated caller.
     let activeSession: { expiresAt: number; sessionId: string } | null = null;
     if (
+      isAuthenticatedCheck &&
       session !== undefined &&
       session.status === 'active' &&
       new Date(session.expiresAt).getTime() > Date.now()
@@ -367,10 +381,10 @@ accessRouter.get(
 );
 
 // POST /api/access/check — batch entitlement check for the marketplace grid.
-// body: { datasetIds: number[] } → { access: { [datasetId]: { hasAccess, active } } }
+// body: { datasetIds: number[], walletAddress: string } → { access: { [datasetId]: { hasAccess, active } } }
+// No authentication required: identity is the public wallet address.
 accessRouter.post(
   '/access/check',
-  requireAuth,
   asyncHandler(async (request: Request, response: Response): Promise<void> => {
     const parsed = accessCheckBodySchema.safeParse(request.body as Record<string, unknown>);
     if (!parsed.success) {
@@ -379,12 +393,12 @@ accessRouter.post(
         details: {
           issues: parsed.error.issues,
         },
-        message: 'datasetIds must be a non-empty list of positive integers.',
+        message: 'datasetIds must be a non-empty list of positive integers and walletAddress is required.',
         statusCode: 400,
       });
     }
     const datasetIds = parsed.data.datasetIds;
-    const authenticatedAddress = getAuthenticatedAddress(request);
+    const authenticatedAddress = parsed.data.walletAddress.toLowerCase();
 
     const [datasetRows, sessionRows] = await Promise.all([
       db

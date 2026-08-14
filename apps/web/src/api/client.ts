@@ -179,18 +179,26 @@ export interface DatasetAccessStatus {
   session: { sessionId: string; expiresAt: number } | null;
 }
 
-export async function checkDatasetAccess(datasetId: number): Promise<DatasetAccessStatus> {
-  return request<DatasetAccessStatus>(`/api/datasets/${datasetId}/access`);
+export async function checkDatasetAccess(datasetId: number, wallet?: string): Promise<DatasetAccessStatus> {
+  // With a wallet address the check works WITHOUT a login (identity is the
+  // public wallet address). Without it, the JWT is used and the active session
+  // id is included when one exists.
+  const qs = wallet ? `?wallet=${encodeURIComponent(wallet)}` : '';
+  return request<DatasetAccessStatus>(`/api/datasets/${datasetId}/access${qs}`);
 }
 
 export async function checkDatasetAccessBatch(
   datasetIds: number[],
+  wallet?: string,
 ): Promise<Record<number, { active: boolean; hasAccess: boolean }>> {
   const data = await request<{ access: Record<number, { active: boolean; hasAccess: boolean }> }>(
     '/api/access/check',
     {
       method: 'POST',
-      body: JSON.stringify({ datasetIds }),
+      body: JSON.stringify({
+        datasetIds,
+        ...(wallet ? { walletAddress: wallet } : {}),
+      }),
     },
   );
   return data.access;
