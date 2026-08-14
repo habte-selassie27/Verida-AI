@@ -5,9 +5,17 @@
 // DB TABLES: None directly; streaming relies on prior session validation and dataset metadata.
 // HANDOFF TO TESTER: Verify stream responses are returned as Readable instances and invalid inputs raise typed errors.
 
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { Readable } from 'node:stream';
 
 import { getShelbyRuntime, parseBlobId, ShelbyStreamError } from './client.js';
+
+// Mirrors LOCAL_BLOBS_DIR in upload.ts/verify.ts. When the shelbynet RPC is
+// unreachable at upload time, uploadDataset stores the file on this instance's
+// disk instead of the node, and the DB still records a blob id. Reads must try
+// that local copy as a fallback or the dataset looks like its blob vanished.
+const LOCAL_BLOBS_DIR = join(process.cwd(), '.shelby-blobs');
 
 // Maximum number of bytes a preview read will pull from storage. Preview reads
 // only need the first few rows, so a small cap keeps the request cheap.
@@ -70,6 +78,17 @@ async function downloadBlob(blobId: string): Promise<unknown> {
   });
 }
 
+async function readLocalBlobBytes(blobId: string): Promise<Buffer | null> {
+  try {
+    const { accountAddress, blobName } = await parseBlobId(blobId);
+    // Must match storeBlobLocally in upload.ts (slashes are encoded as __).
+    const blobPath = join(LOCAL_BLOBS_DIR, accountAddress, blobName.replaceAll('/', '__'));
+    return await readFile(blobPath);
+  } catch {
+    return null;
+  }
+}
+
 export async function streamDataset(blobId: string, sessionId: string): Promise<Readable> {
   try {
     if (sessionId.trim().length === 0) {
@@ -85,6 +104,14 @@ export async function streamDataset(blobId: string, sessionId: string): Promise<
 
     return toNodeReadable(readableSource);
   } catch (cause: unknown) {
+    // Local fallback for uploads that were stored on this instance's disk
+    // because the RPC was unreachable at upload time.
+    const local = await readLocalBlobBytes(blobId);
+
+    if (local !== null) {
+      return Readable.from([local]);
+    }
+
     if (cause instanceof ShelbyStreamError) {
       throw cause;
     }
@@ -132,6 +159,14 @@ export async function readBlobBytes(blobId: string, maxBytes: number): Promise<B
 
     return Buffer.concat(chunks, total);
   } catch (cause: unknown) {
+    // Local fallback for uploads that were stored on this instance's disk
+    // because the RPC was unreachable at upload time.
+    const local = await readLocalBlobBytes(blobId);
+
+    if (local !== null) {
+      return local.subarray(0, maxBytes);
+    }
+
     if (cause instanceof ShelbyStreamError) {
       throw cause;
     }

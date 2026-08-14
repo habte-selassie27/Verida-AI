@@ -188,9 +188,19 @@ async function isShelbyRpcAvailable(rpcBaseUrl: string): Promise<boolean> {
   try {
     const res = await fetch(`${rpcBaseUrl}/v1/blobs/0x1/__healthcheck__`, {
       method: 'GET',
-      signal: AbortSignal.timeout(3000),
+      signal: AbortSignal.timeout(5000),
     });
-    return res.ok;
+
+    // IMPORTANT: the shelbynet storage RPC has NO /healthcheck endpoint. It
+    // answers every /v1/blobs/<account>/<name> probe with HTTP 404
+    // ("Blob __healthcheck__ does not exist") when it is up. Treating any
+    // non-2xx as "down" made EVERY upload fall back to local storage in
+    // production: register_blob and the data PUT were skipped, and the DB got
+    // a blob id that never existed on the node (reads then 404'd).
+    //
+    // A structured HTTP response (4xx included) proves the node is reachable;
+    // only a network failure (fetch throws) or a 5xx means it is down.
+    return res.status < 500;
   } catch {
     return false;
   }
@@ -347,24 +357,76 @@ export async function uploadDataset(
 
     // ── Step 5: Upload blob to storage ──────────────────────────────────
     if (shelbyAvailable && runtime) {
-      const rpcBaseUrl = runtime.rpcBaseUrl.replace(/\/+$/, '');
-      const encodedBlobName = encodeURIComponentKeepSlashes(blobName);
-      const blobUrl = `${rpcBaseUrl}/v1/blobs/${uploadSignerAddress}/${encodedBlobName}`;
+      // The shelbynet RPC has NO single-blob PUT endpoint — it answers any
+      // PUT /v1/blobs/<account>/<name> with 404. Blob data must be written
+      // through the multipart upload flow (POST /v1/multipart-uploads → PUT
+      // parts → POST complete) — the same flow the Shelby SDK uses internally
+      // (client.putBlob is not part of its public type surface). The API key
+      // is forwarded on every call (anonymous writes are per-IP rate limited).
+      const activeRuntime = runtime;
+      const rpcBaseUrl = activeRuntime.rpcBaseUrl.replace(/\/+$/, '');
+      const authHeaders: Record<string, string> = activeRuntime.apiKey
+        ? { Authorization: `Bearer ${activeRuntime.apiKey}` }
+        : {};
+      const multipartPartSize = 5 * 1024 * 1024;
 
       await runWithTransientRetries(async () => {
-        const res = await fetch(blobUrl, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/octet-stream',
-            ...(runtime!.apiKey ? { Authorization: `Bearer ${runtime!.apiKey}` } : {}),
-          },
-          body: blobData,
+        // 1. Start the multipart upload.
+        const startResponse = await fetch(`${rpcBaseUrl}/v1/multipart-uploads`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeaders },
+          body: JSON.stringify({
+            rawAccount: uploadSignerAddress,
+            rawBlobName: blobName,
+            rawPartSize: multipartPartSize,
+          }),
         });
 
-        if (!res.ok) {
-          const body = await res.text().catch(() => '');
+        if (!startResponse.ok) {
+          const body = await startResponse.text().catch(() => '');
           throw new ShelbyUploadError(
-            `Shelby PUT blob failed: ${res.status} ${res.statusText} — ${body}`,
+            `Shelby multipart start failed: ${startResponse.status} ${startResponse.statusText} — ${body}`,
+          );
+        }
+
+        const { uploadId } = (await startResponse.json()) as { uploadId: string };
+
+        // 2. Upload the parts (single part for anything under 5 MB).
+        const totalParts = Math.max(1, Math.ceil(blobData.byteLength / multipartPartSize));
+
+        for (let partIdx = 0; partIdx < totalParts; partIdx += 1) {
+          const partStart = partIdx * multipartPartSize;
+          const partEnd = Math.min(partStart + multipartPartSize, blobData.byteLength);
+          const partResponse = await fetch(
+            `${rpcBaseUrl}/v1/multipart-uploads/${uploadId}/parts/${partIdx}`,
+            {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/octet-stream', ...authHeaders },
+              body: blobData.subarray(partStart, partEnd),
+            },
+          );
+
+          if (!partResponse.ok) {
+            const body = await partResponse.text().catch(() => '');
+            throw new ShelbyUploadError(
+              `Shelby multipart part ${partIdx} failed: ${partResponse.status} ${partResponse.statusText} — ${body}`,
+            );
+          }
+        }
+
+        // 3. Complete the multipart upload.
+        const completeResponse = await fetch(
+          `${rpcBaseUrl}/v1/multipart-uploads/${uploadId}/complete`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders },
+          },
+        );
+
+        if (!completeResponse.ok) {
+          const body = await completeResponse.text().catch(() => '');
+          throw new ShelbyUploadError(
+            `Shelby multipart complete failed: ${completeResponse.status} ${completeResponse.statusText} — ${body}`,
           );
         }
       });
