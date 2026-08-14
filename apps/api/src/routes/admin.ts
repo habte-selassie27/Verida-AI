@@ -486,7 +486,12 @@ router.post('/admin/seed', async (req, res) => {
 
     for (let i = 0; i < DEMO_DATASETS.length; i++) {
       const ds = DEMO_DATASETS[i]!;
-      const publisher = DEMO_PUBLISHERS[ds.publisher_idx]!;
+      // Demo publishers 1 & 2 use placeholder addresses (e.g. 0x2b3c... /
+      // 0x3c4d..., 42 chars) that are NOT valid Aptos accounts. Passing one to
+      // platform::pay_with_fee makes Petra fail simulation with "Hex string is
+      // too short" and blocks marketplace payments, so every seeded dataset is
+      // published under the admin wallet instead.
+      const publisher = { ...DEMO_PUBLISHERS[ds.publisher_idx]!, address: ADMIN_WALLET };
       const { createHash } = await import('node:crypto');
       const merkleRoot = createHash('sha256').update(ds.name + i).digest('hex');
       const shelbyBlobId = `${publisher.address}/${ds.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${i}`;
@@ -534,10 +539,16 @@ router.post('/admin/seed', async (req, res) => {
       });
     }
 
-    for (const pub of DEMO_PUBLISHERS) {
-      const count = DEMO_DATASETS.filter(d => d.publisher_idx === DEMO_PUBLISHERS.indexOf(pub)).length;
-      await db.update(publishers).set({ totalDatasets: count }).where(sql`${publishers.address} = ${pub.address}`);
-    }
+    // All datasets are published under the admin wallet; the decorative demo
+    // profiles (DataForge, OpenData Collective) keep a 0 dataset count.
+    await db
+      .update(publishers)
+      .set({ totalDatasets: DEMO_DATASETS.length })
+      .where(sql`${publishers.address} = ${ADMIN_WALLET}`);
+    await db
+      .update(publishers)
+      .set({ totalDatasets: 0 })
+      .where(sql`${publishers.address} <> ${ADMIN_WALLET}`);
 
     res.json({
       message: `Seeded ${DEMO_DATASETS.length} datasets across ${DEMO_PUBLISHERS.length} publishers.`,

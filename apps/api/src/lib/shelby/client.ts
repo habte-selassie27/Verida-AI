@@ -195,10 +195,15 @@ async function initializeShelbyRuntime(): Promise<ShelbyRuntimeState> {
     apiKey,
     deployer: AccountAddress.fromString('0x85fdb9a176ab8ef1d9d9c1b60d60b3924f0800ac1de1cc2085fb0b8bb4988e6a'),
   });
+  // NOTE: SHELBY_API_KEY is a Shelby *storage* key and must NOT be attached
+  // to the Aptos fullnode client. The shelbynet RPC rejects any request that
+  // carries an unrecognized key with HTTP 401 ("API key not found"), which
+  // broke on-chain payment verification in the access route (every
+  // getTransactionByHash call threw -> 502). Reads (and even signed writes,
+  // as submitted by wallet clients) work without a key on shelbynet.
   const aptos = new Aptos(
     new AptosConfig({
       network,
-      clientConfig: { API_KEY: apiKey },
     }),
   );
   const uploadSigner = await createUploadSigner();

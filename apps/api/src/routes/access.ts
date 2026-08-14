@@ -145,7 +145,18 @@ accessRouter.post(
       // Verify the Aptos transaction on-chain
       try {
         const aptos = await getShelbyAptosClient();
-        const txn = await aptos.getTransactionByHash({ transactionHash: body.txHash });
+        let txn = await aptos.getTransactionByHash({ transactionHash: body.txHash });
+
+        // The tx may still be pending right after wallet submission — wait
+        // briefly for it to commit, then re-fetch the final result instead of
+        // rejecting a legit payment with a confusing error.
+        if (txn.type === 'pending_transaction') {
+          await aptos.waitForTransaction({
+            transactionHash: body.txHash,
+            options: { timeoutSecs: 20 },
+          });
+          txn = await aptos.getTransactionByHash({ transactionHash: body.txHash });
+        }
 
         if (txn.type !== 'user_transaction') {
           throw new ApiRouteError({
@@ -176,9 +187,14 @@ accessRouter.post(
         }
       } catch (cause: unknown) {
         if (cause instanceof ApiRouteError) throw cause;
+        const causeMessage = cause instanceof Error ? cause.message : String(cause);
         console.error('[Access] Failed to verify Aptos transaction:', cause);
         throw new ApiRouteError({
           code: 'PAYMENT_VERIFICATION_FAILED',
+          details: {
+            cause: causeMessage,
+            hint: 'Confirm the tx hash exists on shelbynet and that SHELBY_API_KEY is not being sent to the Aptos fullnode.',
+          },
           message: 'Unable to verify the payment transaction on-chain.',
           statusCode: 502,
         });
