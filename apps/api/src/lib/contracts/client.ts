@@ -1,7 +1,15 @@
 import { Aptos, AptosConfig, Network } from '@aptos-labs/ts-sdk';
 
-export const MARKETPLACE_CONTRACT_ADDRESS = process.env.MARKETPLACE_CONTRACT_ADDRESS ?? '';
-export const PLATFORM_TREASURY_ADDRESS = process.env.PLATFORM_TREASURY_ADDRESS ?? '';
+// The deployed marketplace contract. Defaulted in code (not just env) so
+// server-signed on-chain actions work even when the env var is missing on a
+// host — an empty address here makes every tx fail with the SDK's
+// "Hex string is too short" error (function becomes `::module::fn`).
+export const MARKETPLACE_CONTRACT_ADDRESS =
+  process.env.MARKETPLACE_CONTRACT_ADDRESS?.trim() ||
+  '0x141a8b5da194f039af93bdb7df81824a506fe73cade01138d2309aa7d497fddd';
+
+export const PLATFORM_TREASURY_ADDRESS =
+  process.env.PLATFORM_TREASURY_ADDRESS?.trim() || MARKETPLACE_CONTRACT_ADDRESS;
 
 export const MARKETPLACE_MODULE = `${MARKETPLACE_CONTRACT_ADDRESS}::verida_marketplace`;
 export const PLATFORM_MODULE = `${MARKETPLACE_CONTRACT_ADDRESS}::platform`;

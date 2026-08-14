@@ -1,4 +1,9 @@
-export const MARKETPLACE_CONTRACT_ADDRESS = import.meta.env.VITE_MARKETPLACE_CONTRACT_ADDRESS ?? '';
+// Defaulted in code (not just env) so on-chain payloads are always valid — an
+// empty address would produce `::module::fn` function strings that every wallet
+// rejects with "Hex string is too short".
+export const MARKETPLACE_CONTRACT_ADDRESS =
+  import.meta.env.VITE_MARKETPLACE_CONTRACT_ADDRESS?.trim() ||
+  '0x141a8b5da194f039af93bdb7df81824a506fe73cade01138d2309aa7d497fddd';
 
 export const SHELBYNET_RPC = 'https://api.shelbynet.shelby.xyz/v1';
 export const SHELBYNET_EXPLORER = 'https://explorer.aptoslabs.com';
