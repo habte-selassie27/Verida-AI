@@ -905,7 +905,10 @@ export default function DatasetDetail() {
     ? `${(dataset.price_per_access / OCTAS_PER_APT).toFixed(2)} APT`
     : '—';
   const isOwner = connected && address === dataset.publisher_address;
-  const isLocked = dataset.access_type === 'pay_per_access' && walletState !== 'active' && !isOwner;
+  // Locked only for pay-per-access datasets where this wallet has neither an
+  // active session nor a prior purchase (entitlement). A wallet that already
+  // paid must never see the LOCKED paywall banner again.
+  const isLocked = dataset.access_type === 'pay_per_access' && walletState !== 'active' && !isOwner && !hasPaidAccess;
 
   const provenanceEvents = provenance_chain.map((e) => ({
     id: e.id,

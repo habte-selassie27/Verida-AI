@@ -143,6 +143,13 @@ export default function Marketplace() {
   });
 
   const handlePay = useCallback(async (ds: Dataset) => {
+    // Already unlocked for this wallet — never re-charge. (Guards the race
+    // where the entitlement check hasn't finished when the modal opens.)
+    if (entitledIds.has(ds.id) || purchasedIds.has(ds.id)) {
+      setPayModal(null);
+      navigate(`/datasets/${ds.id}`);
+      return;
+    }
     if (!connected || !address) {
       try { await connect(); } catch { return; }
     }
@@ -178,7 +185,7 @@ export default function Marketplace() {
     } finally {
       setPaying(false);
     }
-  }, [connected, address, connect, isAuthenticated, authLogin, signAndSubmitTransaction, navigate]);
+  }, [connected, address, connect, isAuthenticated, authLogin, signAndSubmitTransaction, navigate, entitledIds, purchasedIds]);
 
   const handleCardClick = (ds: Dataset, e: React.MouseEvent) => {
     if (
