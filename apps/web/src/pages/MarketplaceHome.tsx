@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { MagnifyingGlass, Lock, Star, ArrowRight, X } from '@phosphor-icons/react';
-import { listDatasets, getStats, createAccessSession } from '../api/client';
+import { listDatasets, getStats, createAccessSession, checkDatasetAccessBatch } from '../api/client';
 import { useWalletContext } from '../context/WalletContext';
 import { useAuth } from '../context/AuthContext';
 import { MARKETPLACE_CONTRACT_ADDRESS, calculateFeeBreakdown } from '../lib/contracts';
@@ -69,6 +69,9 @@ export default function Marketplace() {
   const [paying, setPaying] = useState(false);
   const [payError, setPayError] = useState<string | null>(null);
   const [purchasedIds, setPurchasedIds] = useState<Set<number>>(new Set());
+  // Datasets this wallet has already paid for / unlocked (persistent entitlement
+  // — a paid wallet must never be shown the paywall again).
+  const [entitledIds, setEntitledIds] = useState<Set<number>>(new Set());
   const { connected, address, connect, signAndSubmitTransaction } = useWalletContext();
   const { isAuthenticated, login: authLogin } = useAuth();
   const navigate = useNavigate();
@@ -91,6 +94,32 @@ export default function Marketplace() {
     };
     fetchData();
   }, []);
+
+  // Once the wallet is connected + authenticated, check which paid datasets it
+  // has already unlocked so we never show a paywall for something it owns.
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      if (!connected || !address || !isAuthenticated) return;
+      const paidIds = datasets
+        .filter(d => d.access_type === AccessType.PAY_PER_ACCESS)
+        .map(d => d.id);
+      if (paidIds.length === 0) return;
+      try {
+        const access = await checkDatasetAccessBatch(paidIds);
+        if (cancelled) return;
+        setEntitledIds(new Set(
+          Object.entries(access)
+            .filter(([, v]) => v.hasAccess)
+            .map(([id]) => Number(id)),
+        ));
+      } catch {
+        // Not authenticated / network error — fall back to the paywall
+      }
+    };
+    void run();
+    return () => { cancelled = true; };
+  }, [connected, address, isAuthenticated, datasets]);
 
   const verifiedCount = stats?.verified ?? datasets.filter(d => d.verified === true).length;
   const scoredDatasets = datasets.filter(d => d.quality_score !== null && d.quality_score > 0);
@@ -152,7 +181,11 @@ export default function Marketplace() {
   }, [connected, address, connect, isAuthenticated, authLogin, signAndSubmitTransaction, navigate]);
 
   const handleCardClick = (ds: Dataset, e: React.MouseEvent) => {
-    if (ds.access_type === AccessType.PAY_PER_ACCESS && !purchasedIds.has(ds.id)) {
+    if (
+      ds.access_type === AccessType.PAY_PER_ACCESS &&
+      !purchasedIds.has(ds.id) &&
+      !entitledIds.has(ds.id)
+    ) {
       e.preventDefault();
       setPayModal(ds);
     }
@@ -268,7 +301,7 @@ export default function Marketplace() {
           ) : (
             <div className="mkt-dataset-grid">
               {sorted.map(ds => {
-                const isLocked = ds.access_type === AccessType.PAY_PER_ACCESS && !purchasedIds.has(ds.id);
+                const isLocked = ds.access_type === AccessType.PAY_PER_ACCESS && !purchasedIds.has(ds.id) && !entitledIds.has(ds.id);
                 return (
                   <Link
                     key={ds.id}
@@ -304,7 +337,7 @@ export default function Marketplace() {
                         <span className="mkt-dataset-cta mkt-cta--free">View Dataset <ArrowRight size={12} /></span>
                       ) : (
                         <span className="mkt-dataset-cta mkt-cta--locked">
-                          {purchasedIds.has(ds.id) ? 'View Dataset' : `Unlock for ${formatApt(ds.price_per_access)} APT`}
+                          {purchasedIds.has(ds.id) || entitledIds.has(ds.id) ? 'View Dataset' : `Unlock for ${formatApt(ds.price_per_access)} APT`}
                         </span>
                       )}
                       <span className="mkt-dataset-quality" style={{ color: qualityColor(ds.quality_score) }}>

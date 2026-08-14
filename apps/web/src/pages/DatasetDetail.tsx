@@ -9,7 +9,7 @@ import { Button } from '../components/ui/Button';
 import { Skeleton } from '../components/ui/Skeleton';
 import { TagPill } from '../components/ui/TagPill';
 import { ProvenanceTree } from '../components/ProvenanceTree';
-import { getDataset, createAccessSession, verifyDataset, getSimilarDatasets, getStreamUrl, addDatasetVersion, createEscrowEntry, updateEscrowStatus } from '../api/client';
+import { getDataset, createAccessSession, verifyDataset, getSimilarDatasets, getStreamUrl, addDatasetVersion, createEscrowEntry, updateEscrowStatus, checkDatasetAccess } from '../api/client';
 import type { DatasetDetailResponse, SimilarDataset } from '../api/client';
 import { useWalletContext } from '../context/WalletContext';
 import { useAuth } from '../context/AuthContext';
@@ -289,6 +289,9 @@ export default function DatasetDetail() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessionExpires, setSessionExpires] = useState(0);
   const [accessLoading, setAccessLoading] = useState(false);
+  // Permanent entitlement — once this wallet has paid for the dataset it is
+  // never charged again, even after a session expires.
+  const [hasPaidAccess, setHasPaidAccess] = useState(false);
   const [verifyLoading, setVerifyLoading] = useState(false);
   const [relatedDatasets, setRelatedDatasets] = useState<SimilarDataset[]>([]);
   const [relatedLoading, setRelatedLoading] = useState(false);
@@ -389,6 +392,33 @@ export default function DatasetDetail() {
     });
   }, [connected, address]);
 
+  // Check whether this wallet has already paid for / unlocked the dataset, and
+  // restore a still-active session so they never face the paywall again.
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      if (!id || !connected || !address || !isAuthenticated) return;
+      try {
+        const status = await checkDatasetAccess(Number(id));
+        if (cancelled) return;
+        setHasPaidAccess(status.hasAccess);
+        if (status.session) {
+          setSessionId(status.session.sessionId);
+          setSessionExpires(status.session.expiresAt);
+          setWalletState('active');
+          sessionStorage.setItem(`session_${id}`, JSON.stringify({
+            sessionId: status.session.sessionId,
+            expiresAt: status.session.expiresAt,
+          }));
+        }
+      } catch {
+        // Not authenticated / network error — leave state as-is
+      }
+    };
+    void run();
+    return () => { cancelled = true; };
+  }, [id, connected, address, isAuthenticated]);
+
   const handleVerify = async () => {
     if (!id) return;
     if (!connected || !address) {
@@ -444,10 +474,13 @@ export default function DatasetDetail() {
       let depositEscrowId: number | null = null;
 
       // For pay-per-access datasets, deposit the payment into the on-chain
-      // escrow vault. Funds are held until the buyer confirms release (or the
-      // 7-day dispute window auto-releases them), with the 5% platform fee
-      // split off at release.
-      if (detail.dataset.access_type === 'pay_per_access' && detail.dataset.price_per_access) {
+      // escrow vault — but only on the FIRST purchase. A wallet that already
+      // paid is entitled and is granted a fresh session free of charge.
+      if (
+        detail.dataset.access_type === 'pay_per_access' &&
+        detail.dataset.price_per_access &&
+        !hasPaidAccess
+      ) {
         const priceOctas = detail.dataset.price_per_access;
         const publisherAddress = detail.dataset.publisher_address;
 
@@ -470,7 +503,7 @@ export default function DatasetDetail() {
         txHash = depositResult.hash;
       }
 
-      const sessionResult = await createAccessSession(Number(id), address, txHash);
+      const sessionResult = await createAccessSession(Number(id), address, hasPaidAccess ? undefined : txHash);
       setSessionId(sessionResult.sessionId);
       const expiresAt = sessionResult.expiresAt;
       setSessionExpires(expiresAt);
@@ -1440,8 +1473,13 @@ export default function DatasetDetail() {
                           <span className="dd-wallet-addr">{address ? `${address.slice(0, 6)}...${address.slice(-4)}` : 'Connected'}</span>
                         </div>
                         <Button variant="primary" size="lg" fullWidth loading={accessLoading} onClick={handleGetAccess}>
-                          Get Access — {priceStr}
+                          {hasPaidAccess ? 'Get Access — Already Unlocked' : `Get Access — ${priceStr}`}
                         </Button>
+                        {hasPaidAccess && (
+                          <p style={{ fontFamily: 'var(--font-sans)', fontSize: 12, color: 'var(--text-tertiary)', textAlign: 'center', marginTop: 8 }}>
+                            You paid for this dataset before — access is free forever.
+                          </p>
+                        )}
                       </div>
                     )}
 

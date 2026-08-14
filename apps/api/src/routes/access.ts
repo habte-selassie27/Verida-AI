@@ -5,7 +5,7 @@
 // DB TABLES: datasets, access_sessions
 // HANDOFF TO TESTER: Verify 404 behavior for missing datasets, session creation payloads, and validation response accuracy.
 
-import { eq } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import asyncHandler from 'express-async-handler';
@@ -28,6 +28,10 @@ const datasetIdParamSchema = z.object({
 const accessRequestBodySchema = z.object({
   payerAddress: z.string().trim().min(1),
   txHash: z.string().trim().min(1).optional(),
+});
+
+const accessCheckBodySchema = z.object({
+  datasetIds: z.array(z.coerce.number().int().positive()).min(1).max(100),
 });
 
 const sessionIdParamSchema = z.object({
@@ -132,8 +136,48 @@ accessRouter.post(
       });
     }
 
-    // Enforce payment for pay-per-access datasets
-    if (dataset.accessType === 'pay_per_access' && dataset.pricePerAccess !== null) {
+    // A wallet that already has a session for this dataset is permanently
+    // entitled to it — they paid (or accessed) before, so never charge them
+    // again. Re-access simply re-issues a fresh session.
+    const priorSessionRows = await db
+      .select({
+        createdAt: accessSessions.createdAt,
+        expiresAt: accessSessions.expiresAt,
+        sessionId: accessSessions.sessionId,
+        status: accessSessions.status,
+      })
+      .from(accessSessions)
+      .where(
+        and(
+          eq(accessSessions.datasetId, datasetId),
+          eq(accessSessions.accessorAddress, authenticatedAddress),
+        ),
+      )
+      .orderBy(desc(accessSessions.createdAt))
+      .limit(1);
+    const priorSession = priorSessionRows.at(0);
+    const isEntitled = priorSession !== undefined;
+
+    // Reuse a still-active session instead of minting duplicates.
+    if (
+      priorSession !== undefined &&
+      priorSession.status === 'active' &&
+      new Date(priorSession.expiresAt).getTime() > Date.now()
+    ) {
+      response.status(200).json({
+        data: {
+          expiresAt: new Date(priorSession.expiresAt).getTime(),
+          reused: true,
+          sessionId: priorSession.sessionId,
+        },
+        success: true,
+      });
+      return;
+    }
+
+    // Enforce payment for pay-per-access datasets (first access only — an
+    // entitled wallet never pays again).
+    if (dataset.accessType === 'pay_per_access' && dataset.pricePerAccess !== null && !isEntitled) {
       if (!body.txHash) {
         throw new ApiRouteError({
           code: 'PAYMENT_REQUIRED',
@@ -247,6 +291,148 @@ accessRouter.post(
 
       throw cause;
     }
+  }),
+);
+
+// GET /api/datasets/:id/access — entitlement check for the authenticated wallet.
+// Returns whether the wallet is entitled (has paid / previously accessed) and
+// the currently active session, if any.
+accessRouter.get(
+  '/datasets/:id/access',
+  requireAuth,
+  asyncHandler(async (request: Request, response: Response): Promise<void> => {
+    const datasetId = parseDatasetId(request);
+    const authenticatedAddress = getAuthenticatedAddress(request);
+
+    const datasetRows = await db
+      .select({
+        accessType: datasets.accessType,
+        id: datasets.id,
+      })
+      .from(datasets)
+      .where(eq(datasets.id, datasetId))
+      .limit(1);
+    const dataset = datasetRows.at(0);
+
+    if (dataset === undefined) {
+      throw new ApiRouteError({
+        code: 'DATASET_NOT_FOUND',
+        message: `Dataset ${datasetId} was not found.`,
+        statusCode: 404,
+      });
+    }
+
+    const sessionRows = await db
+      .select({
+        expiresAt: accessSessions.expiresAt,
+        sessionId: accessSessions.sessionId,
+        status: accessSessions.status,
+      })
+      .from(accessSessions)
+      .where(
+        and(
+          eq(accessSessions.datasetId, datasetId),
+          eq(accessSessions.accessorAddress, authenticatedAddress),
+        ),
+      )
+      .orderBy(desc(accessSessions.createdAt))
+      .limit(1);
+    const session = sessionRows.at(0);
+
+    // Free datasets are always accessible; paid datasets are unlocked once the
+    // wallet has any session for them (sessions are only ever created after a
+    // verified payment for pay-per-access datasets).
+    const hasAccess = dataset.accessType === 'free' || session !== undefined;
+
+    let activeSession: { expiresAt: number; sessionId: string } | null = null;
+    if (
+      session !== undefined &&
+      session.status === 'active' &&
+      new Date(session.expiresAt).getTime() > Date.now()
+    ) {
+      activeSession = {
+        expiresAt: new Date(session.expiresAt).getTime(),
+        sessionId: session.sessionId,
+      };
+    }
+
+    response.json({
+      data: {
+        hasAccess,
+        session: activeSession,
+      },
+      success: true,
+    });
+  }),
+);
+
+// POST /api/access/check — batch entitlement check for the marketplace grid.
+// body: { datasetIds: number[] } → { access: { [datasetId]: { hasAccess, active } } }
+accessRouter.post(
+  '/access/check',
+  requireAuth,
+  asyncHandler(async (request: Request, response: Response): Promise<void> => {
+    const parsed = accessCheckBodySchema.safeParse(request.body as Record<string, unknown>);
+    if (!parsed.success) {
+      throw new ApiRouteError({
+        code: 'INVALID_ACCESS_CHECK',
+        details: {
+          issues: parsed.error.issues,
+        },
+        message: 'datasetIds must be a non-empty list of positive integers.',
+        statusCode: 400,
+      });
+    }
+    const datasetIds = parsed.data.datasetIds;
+    const authenticatedAddress = getAuthenticatedAddress(request);
+
+    const [datasetRows, sessionRows] = await Promise.all([
+      db
+        .select({
+          accessType: datasets.accessType,
+          id: datasets.id,
+        })
+        .from(datasets)
+        .where(inArray(datasets.id, datasetIds)),
+      db
+        .select({
+          datasetId: accessSessions.datasetId,
+          expiresAt: accessSessions.expiresAt,
+          status: accessSessions.status,
+        })
+        .from(accessSessions)
+        .where(
+          and(
+            eq(accessSessions.accessorAddress, authenticatedAddress),
+            inArray(accessSessions.datasetId, datasetIds),
+          ),
+        ),
+    ]);
+
+    const now = Date.now();
+    const sessionDatasetIds = new Set<number>();
+    const activeDatasetIds = new Set<number>();
+    for (const sessionRow of sessionRows) {
+      sessionDatasetIds.add(sessionRow.datasetId);
+      if (sessionRow.status === 'active' && new Date(sessionRow.expiresAt).getTime() > now) {
+        activeDatasetIds.add(sessionRow.datasetId);
+      }
+    }
+
+    const access: Record<number, { active: boolean; hasAccess: boolean }> = {};
+    for (const datasetRow of datasetRows) {
+      access[datasetRow.id] = {
+        hasAccess: datasetRow.accessType === 'free' || sessionDatasetIds.has(datasetRow.id),
+        active: activeDatasetIds.has(datasetRow.id),
+      };
+    }
+
+    response.json({
+      data: {
+        access,
+      },
+      success: true,
+    });
   }),
 );
 

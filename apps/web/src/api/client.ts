@@ -174,6 +174,28 @@ export async function createAccessSession(
   });
 }
 
+export interface DatasetAccessStatus {
+  hasAccess: boolean;
+  session: { sessionId: string; expiresAt: number } | null;
+}
+
+export async function checkDatasetAccess(datasetId: number): Promise<DatasetAccessStatus> {
+  return request<DatasetAccessStatus>(`/api/datasets/${datasetId}/access`);
+}
+
+export async function checkDatasetAccessBatch(
+  datasetIds: number[],
+): Promise<Record<number, { active: boolean; hasAccess: boolean }>> {
+  const data = await request<{ access: Record<number, { active: boolean; hasAccess: boolean }> }>(
+    '/api/access/check',
+    {
+      method: 'POST',
+      body: JSON.stringify({ datasetIds }),
+    },
+  );
+  return data.access;
+}
+
 export async function verifyDataset(id: number): Promise<{ jobId: string }> {
   const token = getStoredToken();
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
