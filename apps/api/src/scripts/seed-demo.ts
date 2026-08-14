@@ -3,10 +3,16 @@ import { datasets, publishers } from '../lib/db/schema.js';
 import { sql } from 'drizzle-orm';
 import type { AccessType, DatasetModality, DatasetTag, SchemaProfile } from '@verida/shared';
 
+const ADMIN_WALLET = process.env.VITE_MARKETPLACE_CONTRACT_ADDRESS ?? '0x141a8b5da194f039af93bdb7df81824a506fe73cade01138d2309aa7d497fddd';
+
+// NOTE: only the admin wallet is a real Aptos account. The other demo
+// profiles are decorative; their placeholder addresses (42 chars) are not
+// valid accounts and would make Petra fail simulation on payment, so the
+// seed loop below always publishes under ADMIN_WALLET.
 const DEMO_PUBLISHERS = [
-  { address: '0x1a2b3c4d5e6f7890abcdef1234567890abcdef12', username: 'AI Research Lab', bio: 'Leading AI research organization publishing high-quality training datasets.' },
-  { address: '0x2b3c4d5e6f7890abcdef1234567890abcdef1234', username: 'DataForge', bio: 'Curating and publishing verified datasets for machine learning.' },
-  { address: '0x3c4d5e6f7890abcdef1234567890abcdef123456', username: 'OpenData Collective', bio: 'Open-source data initiatives for the AI community.' },
+  { address: ADMIN_WALLET, username: 'AI Research Lab', bio: 'Leading AI research organization publishing high-quality training datasets.' },
+  { address: ADMIN_WALLET, username: 'DataForge', bio: 'Curating and publishing verified datasets for machine learning.' },
+  { address: ADMIN_WALLET, username: 'OpenData Collective', bio: 'Open-source data initiatives for the AI community.' },
 ];
 
 const DEMO_DATASETS = [
