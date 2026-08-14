@@ -254,6 +254,12 @@
   border: 1px solid rgba(251,191,36,.15);
 }
 
+.mkt-access--unlocked {
+  color: #22d3a8;
+  background: rgba(34,211,168,.1);
+  border: 1px solid rgba(34,211,168,.25);
+}
+
 /* ─── Dataset Grid ──────────────────────────────────────────────────── */
 .mkt-dataset-grid {
   display: grid;

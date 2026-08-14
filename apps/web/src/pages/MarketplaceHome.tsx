@@ -45,9 +45,18 @@ function initials(name: string) {
   return name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
 }
 
-function AccessBadge({ accessType, pricePerAccess }: { accessType: AccessType; pricePerAccess: number | null }) {
+function AccessBadge({ accessType, pricePerAccess, unlocked }: {
+  accessType: AccessType;
+  pricePerAccess: number | null;
+  unlocked?: boolean;
+}) {
   if (accessType === AccessType.FREE) {
     return <span className="mkt-access-badge mkt-access--free">FREE</span>;
+  }
+  // Already paid for / unlocked by this wallet — show that instead of a
+  // payment prompt so users are never confused into paying twice.
+  if (unlocked) {
+    return <span className="mkt-access-badge mkt-access--unlocked">UNLOCKED</span>;
   }
   return (
     <span className="mkt-access-badge mkt-access--paid">
@@ -322,7 +331,11 @@ export default function Marketplace() {
                       <div className="mkt-dataset-avatar" style={{ background: ds.verified ? 'rgba(0,245,212,.12)' : 'rgba(139,92,246,.12)' }}>
                         {initials(ds.name)}
                       </div>
-                      <AccessBadge accessType={ds.access_type} pricePerAccess={ds.price_per_access} />
+                      <AccessBadge
+                        accessType={ds.access_type}
+                        pricePerAccess={ds.price_per_access}
+                        unlocked={purchasedIds.has(ds.id) || entitledIds.has(ds.id)}
+                      />
                     </div>
 
                     <h3 className="mkt-dataset-name">{ds.name}</h3>

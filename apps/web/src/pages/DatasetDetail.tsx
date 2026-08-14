@@ -1446,13 +1446,22 @@ export default function DatasetDetail() {
                   </div>
                 ) : (
                   <div>
-                    <div className="dd-price-display">{priceStr}</div>
-                    <div style={{ fontFamily: 'var(--font-sans)', fontSize: 12, color: 'var(--text-tertiary)', marginTop: 4 }}>
-                      per 24-hour session
-                    </div>
+                    {hasPaidAccess ? (
+                      <div className="dd-unlocked-card">
+                        <CheckIcon />
+                        <span>Already unlocked — you paid for this dataset before. Access is free forever.</span>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="dd-price-display">{priceStr}</div>
+                        <div style={{ fontFamily: 'var(--font-sans)', fontSize: 12, color: 'var(--text-tertiary)', marginTop: 4 }}>
+                          per 24-hour session
+                        </div>
 
-                    {detail.dataset.price_per_access && (
-                      <FeeBreakdown priceOctas={detail.dataset.price_per_access} compact />
+                        {detail.dataset.price_per_access && (
+                          <FeeBreakdown priceOctas={detail.dataset.price_per_access} compact />
+                        )}
+                      </>
                     )}
 
                     {walletState === 'no-wallet' && (
