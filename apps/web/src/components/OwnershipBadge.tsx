@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { MARKETPLACE_CONTRACT_ADDRESS } from '../lib/contracts';
+import { transferDatasetOwnership } from '../api/client';
 import { useWalletContext } from '../context/WalletContext';
 import './OwnershipBadge.css';
 
@@ -34,7 +34,7 @@ interface TransferOwnershipProps {
 }
 
 export function TransferOwnershipButton({ datasetId, isOwner }: TransferOwnershipProps) {
-  const { connected, signAndSubmitTransaction } = useWalletContext();
+  const { connected, address } = useWalletContext();
   const [loading, setLoading] = useState(false);
 
   if (!isOwner || !connected) return null;
@@ -42,16 +42,17 @@ export function TransferOwnershipButton({ datasetId, isOwner }: TransferOwnershi
   const handleClick = async () => {
     const newOwner = prompt('Enter the new owner wallet address:');
     if (!newOwner || !newOwner.startsWith('0x')) return;
-    const paddedAddress = '0x' + newOwner.slice(2).padStart(64, '0');
+    if (!address) return;
+    const paddedAddress = '0x' + newOwner.slice(2).toLowerCase().padStart(64, '0');
 
     setLoading(true);
     try {
-      await signAndSubmitTransaction({
-        data: {
-          function: `${MARKETPLACE_CONTRACT_ADDRESS}::ownership::transfer_ownership`,
-          functionArguments: [datasetId, paddedAddress],
-        },
-      });
+      // Transfer is signed server-side with the platform account — the
+      // recorded on-chain owner — so it lands on the configured Aptos network
+      // and passes the contract's owner check (browser-wallet submission fails
+      // with ENOT_OWNER because the wallet is not the registered owner).
+      const result = await transferDatasetOwnership(datasetId, paddedAddress, address);
+      alert(`✓ Ownership transferred on-chain\nNew owner: ${paddedAddress}\nTx: ${result.txHash.slice(0, 18)}…`);
       window.location.reload();
     } catch (err) {
       console.error('Transfer ownership failed:', err);

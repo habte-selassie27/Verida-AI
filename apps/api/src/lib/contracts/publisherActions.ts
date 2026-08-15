@@ -55,3 +55,10 @@ export async function submitRevokeAccess(
 export async function submitRegisterDataset(datasetId: number): Promise<string> {
   return submitEntryFunction(`${OWNERSHIP_MODULE}::register_dataset`, [datasetId]);
 }
+
+export async function submitTransferOwnership(
+  datasetId: number,
+  newOwnerAddress: string,
+): Promise<string> {
+  return submitEntryFunction(`${OWNERSHIP_MODULE}::transfer_ownership`, [datasetId, newOwnerAddress]);
+}

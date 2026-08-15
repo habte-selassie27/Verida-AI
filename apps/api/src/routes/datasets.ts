@@ -34,10 +34,12 @@ import { readBlobBytes, PREVIEW_MAX_READ_BYTES, ShelbyAccessError, streamDataset
 import { buildPreviewFromText, PREVIEWABLE_FORMATS } from '../lib/datasetPreview.js';
 import { getAuthenticatedAddress, requireAuth } from '../middleware/auth.js';
 import { generalRateLimit, streamRateLimit, uploadRateLimit } from '../middleware/rateLimit.js';
+import { checkOnChainOwnership } from '../lib/contracts/access.js';
 import {
   submitGrantAccess,
   submitRegisterDataset,
   submitRevokeAccess,
+  submitTransferOwnership,
 } from '../lib/contracts/publisherActions.js';
 
 const accessCountSubquery = db
@@ -138,6 +140,11 @@ const revokeAccessBodySchema = z.object({
 
 const registerOwnershipBodySchema = z.object({
   callerAddress: z.string().trim().min(1),
+});
+
+const transferOwnershipBodySchema = z.object({
+  callerAddress: z.string().trim().min(1),
+  newOwner: accessorAddressSchema,
 });
 
 const listQuerySchema = z.object({
@@ -1199,6 +1206,70 @@ datasetsRouter.post(
         code: 'ON_CHAIN_REVOKE_FAILED',
         details: { cause: cause instanceof Error ? cause.message : String(cause) },
         message: cause instanceof Error ? cause.message : 'On-chain revoke failed.',
+        statusCode: 502,
+      });
+    }
+  }),
+);
+
+// POST /api/datasets/:id/transfer-ownership — server-signed ownership::transfer_ownership.
+// Signed with the platform account, which is the recorded on-chain owner after
+// register_dataset, so the on-chain `owner == caller` check passes even though
+// the browser wallet is not the registered owner. The DB publisher is updated
+// to the recipient so the UI badge and publisher actions follow the new owner.
+datasetsRouter.post(
+  '/:id/transfer-ownership',
+  generalRateLimit,
+  asyncHandler(async (request: Request, response: Response): Promise<void> => {
+    const datasetId = parseRouteDatasetId(request);
+    const parsed = transferOwnershipBodySchema.safeParse(request.body);
+
+    if (!parsed.success) {
+      throw new ApiRouteError({
+        code: 'INVALID_BODY',
+        details: { issues: parsed.error.issues },
+        message: 'Invalid transfer-ownership payload.',
+        statusCode: 400,
+      });
+    }
+
+    await requireDatasetOwner(datasetId, parsed.data.callerAddress);
+
+    // The contract aborts with ENOT_OWNER when no ownership record exists yet
+    // — surface an actionable error instead of a cryptic VM abort.
+    const ownership = await checkOnChainOwnership(datasetId);
+    if (!ownership.isOnChain) {
+      throw new ApiRouteError({
+        code: 'DATASET_NOT_REGISTERED_ON_CHAIN',
+        message: 'This dataset is not registered on-chain yet. Click "Register Ownership On-Chain" first.',
+        statusCode: 409,
+      });
+    }
+
+    const newOwner = parsed.data.newOwner.toLowerCase();
+
+    try {
+      const txHash = await submitTransferOwnership(datasetId, newOwner);
+
+      // Keep the DB publisher in sync with the new on-chain owner.
+      await db
+        .insert(publishers)
+        .values({ address: newOwner })
+        .onConflictDoNothing();
+      await db
+        .update(datasets)
+        .set({ publisherAddress: newOwner })
+        .where(eq(datasets.id, datasetId));
+
+      response.json({
+        data: { datasetId, newOwner, txHash },
+        success: true,
+      });
+    } catch (cause: unknown) {
+      throw new ApiRouteError({
+        code: 'ON_CHAIN_TRANSFER_FAILED',
+        details: { cause: cause instanceof Error ? cause.message : String(cause) },
+        message: cause instanceof Error ? cause.message : 'On-chain ownership transfer failed.',
         statusCode: 502,
       });
     }

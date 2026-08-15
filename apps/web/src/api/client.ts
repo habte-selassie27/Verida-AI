@@ -260,6 +260,17 @@ export async function registerDatasetOwnership(
   });
 }
 
+export async function transferDatasetOwnership(
+  datasetId: number,
+  newOwner: string,
+  callerAddress: string,
+): Promise<OnChainActionResult> {
+  return request<OnChainActionResult>(`/api/datasets/${datasetId}/transfer-ownership`, {
+    method: 'POST',
+    body: JSON.stringify({ newOwner, callerAddress }),
+  });
+}
+
 export async function verifyDataset(id: number): Promise<{ jobId: string }> {
   const token = getStoredToken();
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
