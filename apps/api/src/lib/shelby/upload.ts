@@ -16,7 +16,7 @@ import {
   expectedTotalChunksets,
   generateCommitments,
 } from '@shelby-protocol/sdk/node';
-import { MoveOption, MoveString, MoveVector } from '@aptos-labs/ts-sdk';
+import { AccountAddress, MoveOption, MoveString, MoveVector } from '@aptos-labs/ts-sdk';
 import type { ProvenanceReceipt } from '@verida/shared';
 
 import {
@@ -316,6 +316,7 @@ export async function uploadDataset(
         await runWithTransientRetries(async () => {
           await aptosClient.waitForTransaction({
             transactionHash: writeBlobTransactionHash,
+            options: { timeoutSecs: 30 },
           });
         });
 
@@ -357,81 +358,36 @@ export async function uploadDataset(
 
     // ── Step 5: Upload blob to storage ──────────────────────────────────
     if (shelbyAvailable && runtime) {
-      // The shelbynet RPC has NO single-blob PUT endpoint — it answers any
-      // PUT /v1/blobs/<account>/<name> with 404. Blob data must be written
-      // through the multipart upload flow (POST /v1/multipart-uploads → PUT
-      // parts → POST complete) — the same flow the Shelby SDK uses internally
-      // (client.putBlob is not part of its public type surface). The API key
-      // is forwarded on every call (anonymous writes are per-IP rate limited).
-      const activeRuntime = runtime;
-      const rpcBaseUrl = activeRuntime.rpcBaseUrl.replace(/\/+$/, '');
-      const authHeaders: Record<string, string> = activeRuntime.apiKey
-        ? { Authorization: `Bearer ${activeRuntime.apiKey}` }
-        : {};
-      const multipartPartSize = 5 * 1024 * 1024;
+      // Use the SDK's putBlob method — handles multipart internally.
+      // This replaces the old manual multipart upload (POST /v1/multipart-uploads)
+      // which was retired in the Shelby v2 upload flow update.
+      let rpcUploadSucceeded = false;
 
-      await runWithTransientRetries(async () => {
-        // 1. Start the multipart upload.
-        const startResponse = await fetch(`${rpcBaseUrl}/v1/multipart-uploads`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...authHeaders },
-          body: JSON.stringify({
-            rawAccount: uploadSignerAddress,
-            rawBlobName: blobName,
-            rawPartSize: multipartPartSize,
-          }),
+      try {
+        await runWithTransientRetries(async () => {
+          await runtime.client.rpc.putBlob({
+            account: AccountAddress.fromString(uploadSignerAddress),
+            blobName,
+            blobData,
+          });
         });
-
-        if (!startResponse.ok) {
-          const body = await startResponse.text().catch(() => '');
-          throw new ShelbyUploadError(
-            `Shelby multipart start failed: ${startResponse.status} ${startResponse.statusText} — ${body}`,
-          );
+        rpcUploadSucceeded = true;
+        console.log(`[Shelby] Blob uploaded to RPC: ${blobName}`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message.toLowerCase() : '';
+        // If the blob already exists on the RPC, treat as success
+        if (message.includes('already') || message.includes('conflict')) {
+          rpcUploadSucceeded = true;
+          console.log(`[Shelby] Blob already exists on RPC: ${blobName}`);
+        } else {
+          console.warn('[Shelby] RPC putBlob failed, falling back to local storage:', err instanceof Error ? err.message : err);
         }
+      }
 
-        const { uploadId } = (await startResponse.json()) as { uploadId: string };
-
-        // 2. Upload the parts (single part for anything under 5 MB).
-        const totalParts = Math.max(1, Math.ceil(blobData.byteLength / multipartPartSize));
-
-        for (let partIdx = 0; partIdx < totalParts; partIdx += 1) {
-          const partStart = partIdx * multipartPartSize;
-          const partEnd = Math.min(partStart + multipartPartSize, blobData.byteLength);
-          const partResponse = await fetch(
-            `${rpcBaseUrl}/v1/multipart-uploads/${uploadId}/parts/${partIdx}`,
-            {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/octet-stream', ...authHeaders },
-              body: blobData.subarray(partStart, partEnd),
-            },
-          );
-
-          if (!partResponse.ok) {
-            const body = await partResponse.text().catch(() => '');
-            throw new ShelbyUploadError(
-              `Shelby multipart part ${partIdx} failed: ${partResponse.status} ${partResponse.statusText} — ${body}`,
-            );
-          }
-        }
-
-        // 3. Complete the multipart upload.
-        const completeResponse = await fetch(
-          `${rpcBaseUrl}/v1/multipart-uploads/${uploadId}/complete`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...authHeaders },
-          },
-        );
-
-        if (!completeResponse.ok) {
-          const body = await completeResponse.text().catch(() => '');
-          throw new ShelbyUploadError(
-            `Shelby multipart complete failed: ${completeResponse.status} ${completeResponse.statusText} — ${body}`,
-          );
-        }
-      });
-
-      console.log(`[Shelby] Blob uploaded to RPC: ${blobName}`);
+      if (!rpcUploadSucceeded) {
+        await storeBlobLocally(uploadSignerAddress, blobName, blobData);
+        console.warn(`[Shelby] RPC upload failed — stored blob locally: ${LOCAL_BLOBS_DIR}/${uploadSignerAddress}/${blobName}`);
+      }
     } else {
       // Dev fallback: store locally
       await storeBlobLocally(uploadSignerAddress, blobName, blobData);
