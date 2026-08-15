@@ -9,3 +9,11 @@ coverage
 *.log
 .DS_Store
 .vercel
+
+# Scratch debug scripts
+apps/api/addr-test.mjs
+apps/api/build-test.mjs
+apps/api/fn-test.mjs
+apps/api/fn-test2.mjs
+apps/api/fn-test3.mjs
+apps/api/res-test.mjs
