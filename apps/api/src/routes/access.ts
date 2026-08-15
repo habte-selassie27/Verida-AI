@@ -12,6 +12,7 @@ import asyncHandler from 'express-async-handler';
 import { z } from 'zod';
 
 import { datasets, db, accessSessions } from '../lib/db/index.js';
+import { recordProvenanceEvent } from '../lib/provenance/record.js';
 import { getShelbyAptosClient } from '../lib/shelby/client.js';
 import { createAccessSession, ShelbyAccessError, validateSession } from '../lib/shelby/index.js';
 import { createPaymentSession, verifyPayWithFeeTransaction } from '../lib/contracts/payment.js';
@@ -121,8 +122,10 @@ accessRouter.post(
       .select({
         accessType: datasets.accessType,
         id: datasets.id,
+        merkleRoot: datasets.merkleRoot,
         pricePerAccess: datasets.pricePerAccess,
         shelbyBlobId: datasets.shelbyBlobId,
+        version: datasets.version,
       })
       .from(datasets)
       .where(eq(datasets.id, datasetId))
@@ -269,6 +272,30 @@ accessRouter.post(
         } else {
           throw shelbyErr;
         }
+      }
+
+      // Record the ACCESSED provenance event (best-effort — access must never
+      // fail because the timeline write did). Only a real payment tx hash is
+      // stored; local/demo flows leave it NULL.
+      try {
+        await db.transaction(async (tx) => {
+          await recordProvenanceEvent(tx, {
+            actorAddress: authenticatedAddress,
+            blobId: dataset.shelbyBlobId,
+            datasetId,
+            eventType: 'ACCESSED',
+            merkleRoot: dataset.merkleRoot,
+            metadata: {
+              paymentTxHash: body.txHash ?? null,
+              sessionId: session.sessionId,
+            },
+            shelbyReceipt: null,
+            txHash: body.txHash ?? null,
+            version: dataset.version,
+          });
+        });
+      } catch (provCause: unknown) {
+        console.warn('[Access] Failed to record ACCESSED provenance event:', provCause);
       }
 
       response.status(201).json({

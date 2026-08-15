@@ -474,7 +474,9 @@ export async function uploadDataset(
       merkleRoot,
       uploadedAt: Date.now(),
       uploaderAddress: uploadSignerAddress,
-      txHash: writeBlobTransactionHash || `local-${Date.now().toString(36)}`,
+      // Only ever a REAL Aptos transaction hash. Local/demo uploads (Shelby
+      // RPC or Aptos unavailable) get NULL — never a fabricated 'local-*' hash.
+      txHash: writeBlobTransactionHash || null,
       size: fileSizeBytes,
       chunkCount: blobCommitments ? await countChunkCommitments(blobCommitments) : 1,
     };

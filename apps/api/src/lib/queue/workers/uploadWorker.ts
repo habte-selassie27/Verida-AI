@@ -11,7 +11,8 @@ import { eq } from 'drizzle-orm';
 import { Worker } from 'bullmq';
 import { AccessType, type Dataset } from '@verida/shared';
 
-import { db, datasets, datasetVersions, provenanceChain, publishers } from '../../db/index.js';
+import { db, datasets, datasetVersions, publishers } from '../../db/index.js';
+import { recordProvenanceEvent } from '../../provenance/record.js';
 import {
   emitUploadComplete,
   emitUploadError,
@@ -199,10 +200,12 @@ async function persistUploadedDataset(
       version: datasetVersion,
     });
 
-    await tx.insert(provenanceChain).values({
+    await recordProvenanceEvent(tx, {
       actorAddress: jobData.publisherAddress,
+      blobId: uploadResult.blobId,
       datasetId: dataset.id,
       eventType: 'UPLOAD',
+      merkleRoot: uploadResult.merkleRoot,
       metadata: {
         contentHash: jobData.contentHash,
         jobId,
@@ -297,10 +300,12 @@ async function persistNewVersion(
       throw new UploadWorkerError('Version upload did not return the updated dataset row.');
     }
 
-    await tx.insert(provenanceChain).values({
+    await recordProvenanceEvent(tx, {
       actorAddress: jobData.publisherAddress,
+      blobId: uploadResult.blobId,
       datasetId: parentDataset.id,
       eventType: 'VERSION_ADDED',
+      merkleRoot: uploadResult.merkleRoot,
       metadata: {
         changelog: jobData.metadata.changelog ?? null,
         contentHash: jobData.contentHash,

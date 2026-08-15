@@ -48,7 +48,9 @@ export interface ProvenanceReceipt {
   merkleRoot: string;
   uploadedAt: number;
   uploaderAddress: string;
-  txHash: string;
+  // Nullable: only ever holds a REAL Aptos transaction hash. NULL means no
+  // on-chain transaction exists (local/demo uploads) — never fabricate hashes.
+  txHash: string | null;
   size: number;
   chunkCount: number;
 }

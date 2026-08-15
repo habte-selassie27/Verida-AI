@@ -40,6 +40,22 @@ const TABLE_CREATES: string[] = [
     "created_at" timestamp with time zone DEFAULT now() NOT NULL,
     PRIMARY KEY ("post_id", "liker_id")
   );`,
+  `CREATE TABLE IF NOT EXISTS "blockchain_outbox" (
+    "id" serial PRIMARY KEY NOT NULL,
+    "provenance_event_id" integer NOT NULL REFERENCES "provenance_chain"("id") ON DELETE CASCADE,
+    "dataset_id" integer NOT NULL,
+    "event_type" text NOT NULL,
+    "payload" jsonb NOT NULL,
+    "status" text DEFAULT 'PENDING' NOT NULL,
+    "attempt_count" integer DEFAULT 0 NOT NULL,
+    "last_error" text,
+    "next_retry_at" timestamp with time zone,
+    "aptos_tx_hash" text,
+    "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+    "submitted_at" timestamp with time zone,
+    "confirmed_at" timestamp with time zone
+  );`,
 ];
 
 // Idempotent column definitions for every table in schema.ts. These repair
@@ -109,8 +125,27 @@ const TABLE_COLUMNS: Record<string, string[]> = {
     `"actor_address" text NOT NULL`,
     `"timestamp" timestamp with time zone DEFAULT now() NOT NULL`,
     `"shelby_receipt" jsonb NOT NULL`,
-    `"tx_hash" text NOT NULL`,
+    `"tx_hash" text`,
     `"metadata" jsonb NOT NULL`,
+    `"blockchain_status" text DEFAULT 'NOT_REQUIRED' NOT NULL`,
+    `"blockchain_error" text`,
+    `"blockchain_submitted_at" timestamp with time zone`,
+    `"blockchain_confirmed_at" timestamp with time zone`,
+  ],
+  blockchain_outbox: [
+    `"provenance_event_id" integer NOT NULL`,
+    `"dataset_id" integer NOT NULL`,
+    `"event_type" text NOT NULL`,
+    `"payload" jsonb NOT NULL`,
+    `"status" text DEFAULT 'PENDING' NOT NULL`,
+    `"attempt_count" integer DEFAULT 0 NOT NULL`,
+    `"last_error" text`,
+    `"next_retry_at" timestamp with time zone`,
+    `"aptos_tx_hash" text`,
+    `"created_at" timestamp with time zone DEFAULT now() NOT NULL`,
+    `"updated_at" timestamp with time zone DEFAULT now() NOT NULL`,
+    `"submitted_at" timestamp with time zone`,
+    `"confirmed_at" timestamp with time zone`,
   ],
 };
 
@@ -149,8 +184,38 @@ const TABLE_INDEXES: Record<string, string[]> = {
     `CREATE INDEX IF NOT EXISTS "provenance_chain_dataset_id_idx" ON "provenance_chain" USING btree ("dataset_id")`,
     `CREATE INDEX IF NOT EXISTS "provenance_chain_dataset_timestamp_idx" ON "provenance_chain" USING btree ("dataset_id", "timestamp")`,
     `CREATE INDEX IF NOT EXISTS "provenance_chain_event_type_idx" ON "provenance_chain" USING btree ("event_type")`,
+    `CREATE INDEX IF NOT EXISTS "provenance_chain_blockchain_status_idx" ON "provenance_chain" USING btree ("blockchain_status")`,
+  ],
+  blockchain_outbox: [
+    `CREATE UNIQUE INDEX IF NOT EXISTS "blockchain_outbox_provenance_event_id_unique" ON "blockchain_outbox" USING btree ("provenance_event_id")`,
+    `CREATE INDEX IF NOT EXISTS "blockchain_outbox_status_idx" ON "blockchain_outbox" USING btree ("status", "next_retry_at")`,
+    `CREATE INDEX IF NOT EXISTS "blockchain_outbox_dataset_id_idx" ON "blockchain_outbox" USING btree ("dataset_id")`,
   ],
 };
+
+// v1 provenance blockchain state: tx_hash becomes nullable (never store fake
+// hashes), and provenance events gain blockchain submission tracking columns.
+// Idempotent — safe for databases that already have the columns or deployed
+// before this change.
+async function repairProvenanceBlockchainSchema(): Promise<void> {
+  const statement = `
+    DO $verida$
+    BEGIN
+      ALTER TABLE "provenance_chain" ALTER COLUMN "tx_hash" DROP NOT NULL;
+      ALTER TABLE "provenance_chain" ADD COLUMN IF NOT EXISTS "blockchain_status" text DEFAULT 'NOT_REQUIRED' NOT NULL;
+      ALTER TABLE "provenance_chain" ADD COLUMN IF NOT EXISTS "blockchain_error" text;
+      ALTER TABLE "provenance_chain" ADD COLUMN IF NOT EXISTS "blockchain_submitted_at" timestamp with time zone;
+      ALTER TABLE "provenance_chain" ADD COLUMN IF NOT EXISTS "blockchain_confirmed_at" timestamp with time zone;
+      CREATE INDEX IF NOT EXISTS "provenance_chain_blockchain_status_idx" ON "provenance_chain" USING btree ("blockchain_status");
+    END $verida$;
+  `;
+  try {
+    await db.execute(sql.raw(statement));
+    console.log('[DB] Provenance blockchain schema repair complete.');
+  } catch (cause: unknown) {
+    console.error('[DB] Provenance blockchain schema repair failed:', cause);
+  }
+}
 
 // v2 community schema: likes/comments no longer require a wallet. Comments gain
 // a display_name and a nullable author_address; likes are deduplicated by a
@@ -247,6 +312,9 @@ export async function runMigrations(): Promise<void> {
 
   // Community schema evolution (web2 likes/comments).
   await repairCommunitySchemaV2();
+
+  // Provenance blockchain submission state.
+  await repairProvenanceBlockchainSchema();
 }
 
 const isMainModule =

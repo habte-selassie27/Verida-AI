@@ -87,10 +87,15 @@ export interface DatasetDetailResponse {
     event_type: string;
     actor_address: string;
     timestamp: string;
-    tx_hash: string;
+    // Nullable: only ever a REAL Aptos tx hash; null means no on-chain tx.
+    tx_hash: string | null;
     version: number;
     shelby_receipt: unknown;
     metadata: unknown;
+    blockchain_status: string | null;
+    blockchain_error: string | null;
+    blockchain_submitted_at: string | null;
+    blockchain_confirmed_at: string | null;
   }[];
 }
 

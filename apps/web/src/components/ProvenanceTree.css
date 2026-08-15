@@ -147,3 +147,39 @@
   font-family: var(--font-sans);
   font-size: 13px;
 }
+
+.pt-bc-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.pt-bc-confirmed {
+  background: rgba(74, 222, 128, 0.12);
+  color: var(--success-400, #4ade80);
+  border: 1px solid rgba(74, 222, 128, 0.3);
+}
+
+.pt-bc-pending {
+  background: rgba(251, 191, 36, 0.12);
+  color: #fbbf24;
+  border: 1px solid rgba(251, 191, 36, 0.3);
+}
+
+.pt-bc-failed {
+  background: rgba(248, 113, 113, 0.12);
+  color: #f87171;
+  border: 1px solid rgba(248, 113, 113, 0.3);
+}
+
+.pt-bc-not-required {
+  background: rgba(148, 163, 184, 0.1);
+  color: var(--text-tertiary);
+  border: 1px solid var(--border-subtle);
+}

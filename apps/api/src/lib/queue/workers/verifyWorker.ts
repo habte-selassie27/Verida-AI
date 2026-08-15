@@ -9,6 +9,7 @@ import { Worker } from 'bullmq';
 import { eq } from 'drizzle-orm';
 
 import { db, datasets } from '../../db/index.js';
+import { recordProvenanceEvent } from '../../provenance/record.js';
 import { createBullMqConnection, UploadJobTypes, type VerifyIntegrityJobData } from '../queue.js';
 import { verifyIntegrity } from '../../shelby/verify.js';
 
@@ -33,7 +34,9 @@ class VerifyWorkerError extends Error {
 interface DatasetVerificationRecord {
   id: number;
   merkleRoot: string;
+  publisherAddress: string;
   shelbyBlobId: string;
+  version: number;
 }
 
 async function loadDatasetForVerification(datasetId: number): Promise<DatasetVerificationRecord> {
@@ -41,7 +44,9 @@ async function loadDatasetForVerification(datasetId: number): Promise<DatasetVer
     .select({
       id: datasets.id,
       merkleRoot: datasets.merkleRoot,
+      publisherAddress: datasets.publisherAddress,
       shelbyBlobId: datasets.shelbyBlobId,
+      version: datasets.version,
     })
     .from(datasets)
     .where(eq(datasets.id, datasetId))
@@ -65,12 +70,29 @@ export function createVerifyWorker(): Worker<VerifyIntegrityJobData, VerifyWorke
         const verificationResult = await verifyIntegrity(dataset.shelbyBlobId, dataset.merkleRoot);
 
         if (verificationResult.valid) {
-          await db
-            .update(datasets)
-            .set({
-              verified: true,
-            })
-            .where(eq(datasets.id, dataset.id));
+          await db.transaction(async (tx) => {
+            await tx
+              .update(datasets)
+              .set({
+                verified: true,
+              })
+              .where(eq(datasets.id, dataset.id));
+
+            await recordProvenanceEvent(tx, {
+              actorAddress: dataset.publisherAddress,
+              blobId: dataset.shelbyBlobId,
+              datasetId: dataset.id,
+              eventType: 'VERIFIED',
+              merkleRoot: dataset.merkleRoot,
+              metadata: {
+                checkedAt: verificationResult.checkedAt,
+                result: verificationResult.details,
+              },
+              timestamp: new Date(verificationResult.checkedAt).toISOString(),
+              txHash: null,
+              version: dataset.version,
+            });
+          });
 
           return {
             checkedAt: verificationResult.checkedAt,

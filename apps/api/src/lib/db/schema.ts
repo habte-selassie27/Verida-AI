@@ -42,6 +42,29 @@ export const provenanceEventTypes = [
 
 export type ProvenanceEventType = (typeof provenanceEventTypes)[number];
 
+// Blockchain submission state for provenance events. NOT_REQUIRED means the
+// environment has no Aptos integration configured (local/demo) — no outbox
+// job is created and aptos_tx_hash stays NULL. Never fabricate a tx hash.
+export const blockchainStatusValues = [
+  'NOT_REQUIRED',
+  'PENDING',
+  'SUBMITTED',
+  'CONFIRMED',
+  'FAILED',
+] as const;
+
+export type BlockchainStatus = (typeof blockchainStatusValues)[number];
+
+export const outboxStatusValues = [
+  'PENDING',
+  'PROCESSING',
+  'SUBMITTED',
+  'CONFIRMED',
+  'FAILED',
+] as const;
+
+export type OutboxStatus = (typeof outboxStatusValues)[number];
+
 type JsonRecord = Record<string, unknown>;
 
 export const publishers = pgTable('publishers', {
@@ -170,8 +193,18 @@ export const provenanceChain = pgTable(
       .notNull()
       .defaultNow(),
     shelbyReceipt: jsonb('shelby_receipt').notNull().$type<ProvenanceReceipt>(),
-    txHash: text('tx_hash').notNull(),
+    // Nullable: only ever holds a REAL Aptos transaction hash. NULL means no
+    // real on-chain transaction exists for this event (never 'local-*' fakes).
+    txHash: text('tx_hash'),
     metadata: jsonb('metadata').notNull().$type<JsonRecord>(),
+    // Blockchain submission state (see BlockchainStatus).
+    blockchainStatus: text('blockchain_status')
+      .notNull()
+      .default('NOT_REQUIRED')
+      .$type<BlockchainStatus>(),
+    blockchainError: text('blockchain_error'),
+    blockchainSubmittedAt: timestamp('blockchain_submitted_at', { withTimezone: true, mode: 'string' }),
+    blockchainConfirmedAt: timestamp('blockchain_confirmed_at', { withTimezone: true, mode: 'string' }),
   },
   (table) => ({
     datasetIdIdx: index('provenance_chain_dataset_id_idx').on(table.datasetId),
@@ -180,6 +213,42 @@ export const provenanceChain = pgTable(
       table.timestamp,
     ),
     eventTypeIdx: index('provenance_chain_event_type_idx').on(table.eventType),
+    blockchainStatusIdx: index('provenance_chain_blockchain_status_idx').on(table.blockchainStatus),
+  }),
+);
+
+export const blockchainOutbox = pgTable(
+  'blockchain_outbox',
+  {
+    id: serial('id').primaryKey(),
+    provenanceEventId: integer('provenance_event_id')
+      .notNull()
+      .references(() => provenanceChain.id, { onDelete: 'cascade', onUpdate: 'cascade' }),
+    datasetId: integer('dataset_id').notNull(),
+    eventType: text('event_type').notNull().$type<ProvenanceEventType>(),
+    // Serialized payload submitted to the Move contract (identifiers + hashes
+    // only — never dataset contents).
+    payload: jsonb('payload').notNull().$type<JsonRecord>(),
+    status: text('status').notNull().default('PENDING').$type<OutboxStatus>(),
+    attemptCount: integer('attempt_count').notNull().default(0),
+    lastError: text('last_error'),
+    nextRetryAt: timestamp('next_retry_at', { withTimezone: true, mode: 'string' }),
+    aptosTxHash: text('aptos_tx_hash'),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' })
+      .notNull()
+      .defaultNow(),
+    submittedAt: timestamp('submitted_at', { withTimezone: true, mode: 'string' }),
+    confirmedAt: timestamp('confirmed_at', { withTimezone: true, mode: 'string' }),
+  },
+  (table) => ({
+    provenanceEventIdUniqueIdx: uniqueIndex('blockchain_outbox_provenance_event_id_unique').on(
+      table.provenanceEventId,
+    ),
+    statusIdx: index('blockchain_outbox_status_idx').on(table.status, table.nextRetryAt),
+    datasetIdIdx: index('blockchain_outbox_dataset_id_idx').on(table.datasetId),
   }),
 );
 
@@ -215,6 +284,13 @@ export const provenanceChainRelations = relations(provenanceChain, ({ one }) => 
   dataset: one(datasets, {
     fields: [provenanceChain.datasetId],
     references: [datasets.id],
+  }),
+}));
+
+export const blockchainOutboxRelations = relations(blockchainOutbox, ({ one }) => ({
+  provenanceEvent: one(provenanceChain, {
+    fields: [blockchainOutbox.provenanceEventId],
+    references: [provenanceChain.id],
   }),
 }));
 
@@ -357,3 +433,28 @@ export const subscriptionRelations = relations(subscriptions, ({ one }) => ({
     references: [datasets.id],
   }),
 }));
+
+export const schema = {
+  accessSessionRelations,
+  accessSessions,
+  blockchainOutbox,
+  blockchainOutboxRelations,
+  communityComments,
+  communityLikes,
+  communityPosts,
+  datasetRelations,
+  datasetVersionRelations,
+  datasetVersions,
+  datasets,
+  escrowEntries,
+  escrowEntryRelations,
+  onChainPayments,
+  provenanceChain,
+  provenanceChainRelations,
+  publishers,
+  publisherRelations,
+  subscriptionRelations,
+  subscriptions,
+} as const;
+
+export type SchemaType = typeof schema;

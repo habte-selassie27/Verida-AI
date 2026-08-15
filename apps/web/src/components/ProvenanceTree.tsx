@@ -8,10 +8,11 @@ export interface ProvenanceEvent {
   eventType: string;
   timestamp: string;
   actor: string;
-  txHash?: string;
+  txHash?: string | null;
   merkleRoot?: string;
   notes?: string;
   version?: number;
+  blockchainStatus?: string | null;
 }
 
 interface ProvenanceTreeProps {
@@ -44,6 +45,37 @@ function formatTS(ts: string): string {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+// Only a real Aptos tx hash is ever linked/shown. Never local-* / demo-* fakes.
+function isRealAptosTxHash(hash: string | null | undefined): hash is string {
+  return typeof hash === 'string' && /^0x[0-9a-fA-F]{40,}$/.test(hash.trim());
+}
+
+function buildExplorerUrl(txHash: string): string {
+  const network = (import.meta.env.VITE_APTOS_NETWORK as string | undefined) ?? 'testnet';
+  return `https://explorer.aptoslabs.com/txn/${txHash}?network=${network}`;
+}
+
+type BlockchainBadge = {
+  label: string;
+  className: string;
+};
+
+function blockchainBadgeFor(status: string | null | undefined, txHash?: string | null): BlockchainBadge {
+  const normalized = status?.toUpperCase();
+
+  if (normalized === 'CONFIRMED' && isRealAptosTxHash(txHash)) {
+    return { label: '🟢 On-chain confirmed', className: 'pt-bc-confirmed' };
+  }
+  if (normalized === 'SUBMITTED' || normalized === 'PENDING' || normalized === 'PROCESSING') {
+    return { label: '🟡 Blockchain confirmation pending', className: 'pt-bc-pending' };
+  }
+  if (normalized === 'FAILED') {
+    return { label: '🔴 Blockchain submission failed', className: 'pt-bc-failed' };
+  }
+  // NOT_REQUIRED / null (local or demo uploads) — honest, no fake links.
+  return { label: '⚪ Blockchain not submitted', className: 'pt-bc-not-required' };
 }
 
 function AptosIcon() {
@@ -102,6 +134,8 @@ export function ProvenanceTree({ events, loading = false, compact = false }: Pro
         const dotColor = DOT_COLORS[event.eventType] ?? 'var(--text-tertiary)';
         const isLatest = i === 0;
         const isTampered = event.eventType === 'TAMPER_DETECTED';
+        const hasRealTx = isRealAptosTxHash(event.txHash);
+        const bcBadge = blockchainBadgeFor(event.blockchainStatus, event.txHash);
 
         return (
           <div key={event.id} className="pt-row">
@@ -118,9 +152,9 @@ export function ProvenanceTree({ events, loading = false, compact = false }: Pro
                   </Badge>
                   <span className="pt-ts">{formatTS(event.timestamp)}</span>
                 </div>
-                {event.txHash && (
+                {hasRealTx && (
                   <a
-                    href={`https://explorer.aptoslabs.com/txn/${event.txHash}?network=testnet`}
+                    href={buildExplorerUrl(event.txHash as string)}
                     className="pt-link"
                     target="_blank"
                     rel="noopener noreferrer"
@@ -135,10 +169,22 @@ export function ProvenanceTree({ events, loading = false, compact = false }: Pro
                     <span className="pt-detail-label">ACTOR</span>
                     <AddressDisplay value={event.actor} type="address" showCopyIcon={false} showAptosLink={false} />
                   </div>
-                  {event.txHash && (
+                  <div className="pt-detail">
+                    <span className="pt-detail-label">BLOCKCHAIN</span>
+                    <span className={`pt-bc-badge ${bcBadge.className}`}>{bcBadge.label}</span>
+                  </div>
+                  {hasRealTx && (
                     <div className="pt-detail">
                       <span className="pt-detail-label">APTOS TX</span>
-                      <AddressDisplay value={event.txHash} type="txHash" showAptosLink />
+                      <AddressDisplay value={event.txHash as string} type="txHash" showAptosLink />
+                    </div>
+                  )}
+                  {!hasRealTx && event.txHash && (
+                    // Defensive: an old fake/local hash in the DB should never
+                    // be presented as an Aptos transaction — show it as a note.
+                    <div className="pt-detail">
+                      <span className="pt-detail-label">APTOS TX</span>
+                      <span className="pt-detail-notes">Not available (no real on-chain transaction)</span>
                     </div>
                   )}
                   {event.merkleRoot && (event.eventType === 'UPLOAD' || event.eventType === 'VERSION_ADDED' || event.eventType === 'VERIFIED') && (

@@ -637,21 +637,6 @@ export default function DatasetDetail() {
     }
   };
 
-  const handleEmitProvenance = async (eventType: number, metadata: string) => {
-    if (!id || !connected) return;
-    try {
-      await signAndSubmitTransaction({
-        data: {
-          function: `${MARKETPLACE_CONTRACT_ADDRESS}::provenance::emit_event`,
-          functionArguments: [Number(id), dataset.version, eventType, metadata],
-        },
-      });
-      fetchDetail();
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Failed to emit event');
-    }
-  };
-
   const handleGrantAccess = async () => {
     if (!id || !address) return;
     const accessor = prompt('Enter the wallet address to grant access to:');
@@ -938,6 +923,7 @@ export default function DatasetDetail() {
     actor: e.actor_address,
     txHash: e.tx_hash,
     version: e.version,
+    blockchainStatus: e.blockchain_status,
   }));
 
   const chainIntact = verifStatus !== 'tampered';
@@ -1021,14 +1007,12 @@ export default function DatasetDetail() {
                   </button>
                   <a
                     role="menuitem"
-                    href={dataset.provenance_receipt?.txHash
-                      ? `${SHELBYNET_EXPLORER}/txn/${dataset.provenance_receipt.txHash}?network=testnet`
-                      : `${SHELBYNET_EXPLORER}/account/${dataset.publisher_address}?network=testnet`}
+                    href={`${SHELBYNET_EXPLORER}/account/${dataset.publisher_address}?network=testnet`}
                     target="_blank"
                     rel="noopener noreferrer"
                     onClick={() => setActionMenuOpen(false)}
                   >
-                    View on Explorer ↗
+                    View Publisher on Explorer ↗
                   </a>
                   <button
                     role="menuitem"
@@ -1374,11 +1358,6 @@ export default function DatasetDetail() {
                 <div className="dd-provenance-header">
                   <span className="dd-provenance-title">Provenance Chain — {provCount} events</span>
                   <div className="dd-provenance-actions">
-                    {isOwner && connected && (
-                      <Button variant="teal-outline" size="sm" onClick={() => handleEmitProvenance(4, 'Accessed via marketplace')}>
-                        Emit Access Event
-                      </Button>
-                    )}
                     <Button variant="ghost" size="sm" onClick={handleExportJson}>Export JSON</Button>
                     <Button variant="ghost" size="sm" onClick={handleExportCsv}>Export CSV</Button>
                   </div>

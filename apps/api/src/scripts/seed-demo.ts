@@ -272,7 +272,8 @@ async function seed() {
         size: ds.size_bytes,
         chunkCount: 1,
         uploaderAddress: publisher.address,
-        txHash: merkleRoot,
+        // No real on-chain transaction exists for seeded demo datasets.
+        txHash: null,
         uploadedAt: Date.now(),
       },
       merkleRoot,

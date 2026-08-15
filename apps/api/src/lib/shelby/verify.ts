@@ -10,8 +10,8 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 
-import { db, datasets, provenanceChain } from '../db/index.js';
-import type { ProvenanceEventType } from '../db/schema.js';
+import { db, datasets } from '../db/index.js';
+import { recordProvenanceEvent } from '../provenance/record.js';
 import {
   getShelbyRuntime,
   normalizeMerkleRoot,
@@ -105,19 +105,24 @@ async function persistTamperEvidence(
       .set({ tampered: true })
       .where(eq(datasets.shelbyBlobId, blobId));
 
-    await tx.insert(provenanceChain).values({
-      datasetId: dataset.id,
-      version: dataset.version,
-      eventType: 'TAMPER_DETECTED' as ProvenanceEventType,
+    // TAMPER_DETECTED events get NO tx hash — the receipt hash belongs to the
+    // upload transaction, not this event. A real hash arrives only if/when the
+    // outbox worker successfully emits this event on-chain.
+    await recordProvenanceEvent(tx, {
       actorAddress: dataset.publisherAddress,
-      timestamp: new Date(checkedAt).toISOString(),
-      shelbyReceipt: dataset.provenanceReceipt,
-      txHash: dataset.provenanceReceipt.txHash,
+      blobId,
+      datasetId: dataset.id,
+      eventType: 'TAMPER_DETECTED',
+      merkleRoot: normalizedExpected,
       metadata: {
         expectedMerkleRoot: normalizedExpected,
         actualResult: { valid: false, checkedAt, details: { actualMerkleRoot: normalizedActual } },
         checkedAt,
       },
+      shelbyReceipt: dataset.provenanceReceipt,
+      timestamp: new Date(checkedAt).toISOString(),
+      txHash: null,
+      version: dataset.version,
     });
   });
 

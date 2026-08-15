@@ -26,7 +26,7 @@ interface ProvenanceChainRow {
   actorAddress: string;
   timestamp: string;
   shelbyReceipt: typeof datasets.$inferSelect['provenanceReceipt'];
-  txHash: string;
+  txHash: string | null;
   metadata: Record<string, unknown>;
 }
 

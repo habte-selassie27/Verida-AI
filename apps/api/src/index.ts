@@ -38,6 +38,12 @@ import { escrowRouter } from './routes/escrow.js';
 import { publishersRouter } from './routes/publishers.js';
 import { createUploadProgressWebSocketServer } from './routes/wsUploadProgress.js';
 import { getEscrowKeeperStats, startEscrowKeeper, type EscrowKeeperHandle } from './lib/contracts/escrowKeeper.js';
+import {
+  getBlockchainWorkerStats,
+  getOutboxBacklogCount,
+  startBlockchainWorker,
+  type BlockchainWorkerHandle,
+} from './lib/blockchain/worker.js';
 
 import { adminRouter } from './routes/admin.js';
 
@@ -51,10 +57,17 @@ void qualityWorker;
 
 // Escrow auto-release keeper (starts in startServer, stopped on shutdown).
 let escrowKeeper: EscrowKeeperHandle | null = null;
+// Blockchain outbox worker (starts in startServer, stopped on shutdown).
+let blockchainWorker: BlockchainWorkerHandle | null = null;
 
 function getEscrowKeeperIntervalMs(): number {
   const parsed = Number.parseInt(process.env.ESCROW_KEEPER_INTERVAL_MS ?? '3600000', 10);
   return Number.isFinite(parsed) && parsed >= 60_000 ? parsed : 3_600_000;
+}
+
+function getBlockchainWorkerIntervalMs(): number {
+  const parsed = Number.parseInt(process.env.BLOCKCHAIN_WORKER_INTERVAL_MS ?? '30000', 10);
+  return Number.isFinite(parsed) && parsed >= 5_000 ? parsed : 30_000;
 }
 
 function getServerPort(): number {
@@ -148,6 +161,17 @@ app.get('/api/stats/live', asyncHandler(async (_request: Request, response: Resp
 // /api/stats/live).
 app.get('/api/keeper/status', asyncHandler(async (_request: Request, response: Response): Promise<void> => {
   response.json({ data: getEscrowKeeperStats(), success: true });
+}));
+
+// Blockchain outbox worker observability — pending backlog + last poll.
+app.get('/api/blockchain-worker/status', asyncHandler(async (_request: Request, response: Response): Promise<void> => {
+  response.json({
+    data: {
+      ...getBlockchainWorkerStats(),
+      pendingBacklog: await getOutboxBacklogCount(),
+    },
+    success: true,
+  });
 }));
 
 app.use('/api', adminRouter);
@@ -324,6 +348,9 @@ async function shutdown(server?: ReturnType<typeof app.listen>): Promise<void> {
   await escrowKeeper?.stop();
   escrowKeeper = null;
 
+  await blockchainWorker?.stop();
+  blockchainWorker = null;
+
   await Promise.all([
     closeUploadWorker(),
     closeVerifyWorker(),
@@ -355,6 +382,10 @@ async function startServer(): Promise<void> {
 
   // Start the escrow auto-release keeper (env-gated, default on).
   escrowKeeper = startEscrowKeeper(getEscrowKeeperIntervalMs());
+
+  // Start the blockchain outbox worker (no-op unless APTOS_NETWORK enables
+  // submission). Processes pending provenance events asynchronously.
+  blockchainWorker = startBlockchainWorker(getBlockchainWorkerIntervalMs());
 
   httpServer.listen(port, (): void => {
     console.log(`Verida API listening on http://localhost:${port}`);

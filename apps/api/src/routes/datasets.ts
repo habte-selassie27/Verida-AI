@@ -20,6 +20,7 @@ import { AccessType, DatasetTag, type DatasetModality } from '@verida/shared';
 import { z } from 'zod';
 
 import { db, accessSessions, datasets, datasetVersions, provenanceChain, publishers } from '../lib/db/index.js';
+import { recordProvenanceEvent } from '../lib/provenance/record.js';
 import {
   UploadJobTypes,
   UploadDatasetQueue,
@@ -1088,6 +1089,10 @@ datasetsRouter.get(
       db
         .select({
           actor_address: provenanceChain.actorAddress,
+          blockchain_confirmed_at: provenanceChain.blockchainConfirmedAt,
+          blockchain_error: provenanceChain.blockchainError,
+          blockchain_status: provenanceChain.blockchainStatus,
+          blockchain_submitted_at: provenanceChain.blockchainSubmittedAt,
           dataset_id: provenanceChain.datasetId,
           event_type: provenanceChain.eventType,
           id: provenanceChain.id,
@@ -1251,15 +1256,48 @@ datasetsRouter.post(
     try {
       const txHash = await submitTransferOwnership(datasetId, newOwner);
 
-      // Keep the DB publisher in sync with the new on-chain owner.
-      await db
-        .insert(publishers)
-        .values({ address: newOwner })
-        .onConflictDoNothing();
-      await db
-        .update(datasets)
-        .set({ publisherAddress: newOwner })
-        .where(eq(datasets.id, datasetId));
+      // Keep the DB publisher in sync with the new on-chain owner, and record
+      // the OWNERSHIP_TRANSFERRED provenance event atomically with it.
+      await db.transaction(async (tx) => {
+        await tx
+          .insert(publishers)
+          .values({ address: newOwner })
+          .onConflictDoNothing();
+
+        const currentRows = await tx
+          .select({
+            merkleRoot: datasets.merkleRoot,
+            publisherAddress: datasets.publisherAddress,
+            shelbyBlobId: datasets.shelbyBlobId,
+            version: datasets.version,
+          })
+          .from(datasets)
+          .where(eq(datasets.id, datasetId))
+          .limit(1);
+        const current = currentRows.at(0);
+
+        await tx
+          .update(datasets)
+          .set({ publisherAddress: newOwner })
+          .where(eq(datasets.id, datasetId));
+
+        if (current !== undefined) {
+          await recordProvenanceEvent(tx, {
+            actorAddress: current.publisherAddress,
+            blobId: current.shelbyBlobId,
+            datasetId,
+            eventType: 'OWNERSHIP_TRANSFERRED',
+            merkleRoot: current.merkleRoot,
+            metadata: {
+              from: current.publisherAddress,
+              to: newOwner,
+            },
+            shelbyReceipt: null,
+            txHash,
+            version: current.version,
+          });
+        }
+      });
 
       response.json({
         data: { datasetId, newOwner, txHash },
