@@ -20,8 +20,8 @@ import {
 } from '../api/client';
 import { AddressDisplay } from '../components/ui/AddressDisplay';
 import { useWalletContext } from '../context/WalletContext';
-import { useAuth } from '../context/AuthContext';
 import { MARKETPLACE_CONTRACT_ADDRESS } from '../lib/contracts';
+import { getGuestId, getGuestName, setGuestName } from '../lib/guest';
 import { Markdown } from '../lib/markdown';
 import './Blog.css';
 
@@ -38,22 +38,29 @@ function formatDate(dateStr: string | null): string {
   });
 }
 
+function shortAddress(address: string): string {
+  return address.length > 10 ? `${address.slice(0, 6)}…${address.slice(-4)}` : address;
+}
+
 export default function BlogPost() {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
-  const { connected, address, connect } = useWalletContext();
-  const { isAuthenticated, login } = useAuth();
+  const { connected, address } = useWalletContext();
 
   const [detail, setDetail] = useState<CommunityPostDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [commentText, setCommentText] = useState('');
+  const [commentName, setCommentName] = useState(getGuestName);
   const [submittingComment, setSubmittingComment] = useState(false);
   const [liking, setLiking] = useState(false);
   const [deletingComment, setDeletingComment] = useState<number | null>(null);
   const [deletingPost, setDeletingPost] = useState(false);
 
   const isAdmin = connected && address !== null && address.toLowerCase() === ADMIN_WALLET;
+  // Identity for likes: the connected wallet when available, otherwise a
+  // stable per-browser guest id — no sign-in required either way.
+  const likerId = address !== null ? address.toLowerCase() : getGuestId();
 
   const fetchDetail = useCallback(async (currentSlug: string, viewer: string | null) => {
     setLoading(true);
@@ -71,36 +78,15 @@ export default function BlogPost() {
 
   useEffect(() => {
     if (!slug) return;
-    void fetchDetail(slug, address ?? null);
-    // Re-fetch when the wallet connects so liked-by-viewer reflects the wallet.
+    void fetchDetail(slug, address !== null ? address.toLowerCase() : getGuestId());
+    // Re-fetch when the wallet connects so liked-by-viewer follows the wallet.
   }, [slug, address, fetchDetail]);
-
-  const ensureSignedIn = async (): Promise<boolean> => {
-    if (!connected || !address) {
-      try {
-        await connect();
-      } catch (err) {
-        alert(err instanceof Error ? err.message : 'Please connect your wallet.');
-        return false;
-      }
-    }
-    if (!isAuthenticated) {
-      try {
-        await login();
-      } catch (err) {
-        alert(err instanceof Error ? err.message : 'Please sign the authentication message to continue.');
-        return false;
-      }
-    }
-    return true;
-  };
 
   const handleLike = async () => {
     if (!detail) return;
-    if (!(await ensureSignedIn())) return;
     setLiking(true);
     try {
-      const result = await toggleCommunityLike(detail.post.id);
+      const result = await toggleCommunityLike(detail.post.id, likerId, address);
       setDetail((prev) =>
         prev ? { ...prev, liked_by_viewer: result.liked, post: { ...prev.post, like_count: result.likeCount } } : prev,
       );
@@ -115,10 +101,11 @@ export default function BlogPost() {
     if (!detail || !detail.post) return;
     const content = commentText.trim();
     if (content.length === 0) return;
-    if (!(await ensureSignedIn())) return;
+    const name = commentName.trim() || 'Guest';
+    setGuestName(name);
     setSubmittingComment(true);
     try {
-      const result = await addCommunityComment(detail.post.id, content);
+      const result = await addCommunityComment(detail.post.id, content, name, address);
       setDetail((prev) =>
         prev
           ? {
@@ -245,9 +232,16 @@ export default function BlogPost() {
           </h2>
 
           <div className="blog-comment-form">
+            <input
+              className="blog-field-input"
+              placeholder="Your name (optional)"
+              value={commentName}
+              maxLength={40}
+              onChange={(event) => setCommentName(event.target.value)}
+            />
             <textarea
               className="blog-comment-input"
-              placeholder={connected ? 'Share your thoughts…' : 'Connect your wallet to comment.'}
+              placeholder="Share your thoughts… (no wallet needed)"
               value={commentText}
               maxLength={2000}
               rows={3}
@@ -255,7 +249,7 @@ export default function BlogPost() {
             />
             <button
               className="blog-comment-submit"
-              disabled={!connected || commentText.trim().length === 0 || submittingComment}
+              disabled={commentText.trim().length === 0 || submittingComment}
               onClick={handleCommentSubmit}
             >
               {submittingComment ? 'Posting…' : 'Post Comment'}
@@ -267,15 +261,25 @@ export default function BlogPost() {
           ) : (
             <div className="blog-comment-list">
               {comments.map((comment) => {
+                const authorAddress = comment.author_address ?? null;
                 const canDelete =
                   (connected &&
                     address !== null &&
-                    (comment.author_address ?? '').toLowerCase() === address.toLowerCase()) ||
+                    authorAddress !== null &&
+                    authorAddress.toLowerCase() === address.toLowerCase()) ||
                   isAdmin;
                 return (
                   <div key={comment.id} className="blog-comment">
                     <div className="blog-comment-head">
-                      <AddressDisplay value={comment.author_address} type="address" showCopyIcon={false} showAptosLink={false} />
+                      <span className="blog-comment-author">
+                        <UserCircle size={15} />
+                        {comment.display_name ?? (authorAddress ? shortAddress(authorAddress) : 'Guest')}
+                        {authorAddress && (
+                          <span className="blog-comment-wallet">
+                            <AddressDisplay value={authorAddress} type="address" showCopyIcon={false} showAptosLink={false} />
+                          </span>
+                        )}
+                      </span>
                       <span className="blog-comment-date">{formatDate(comment.created_at)}</span>
                       {canDelete && (
                         <button

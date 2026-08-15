@@ -28,15 +28,17 @@ const TABLE_CREATES: string[] = [
   `CREATE TABLE IF NOT EXISTS "community_comments" (
     "id" serial PRIMARY KEY NOT NULL,
     "post_id" integer NOT NULL REFERENCES "community_posts"("id") ON DELETE CASCADE,
-    "author_address" text NOT NULL,
+    "author_address" text,
+    "display_name" text,
     "content" text NOT NULL,
     "created_at" timestamp with time zone DEFAULT now() NOT NULL
   );`,
   `CREATE TABLE IF NOT EXISTS "community_likes" (
     "post_id" integer NOT NULL REFERENCES "community_posts"("id") ON DELETE CASCADE,
-    "liker_address" text NOT NULL,
+    "liker_id" text NOT NULL,
+    "liker_address" text,
     "created_at" timestamp with time zone DEFAULT now() NOT NULL,
-    PRIMARY KEY ("post_id", "liker_address")
+    PRIMARY KEY ("post_id", "liker_id")
   );`,
 ];
 
@@ -150,6 +152,36 @@ const TABLE_INDEXES: Record<string, string[]> = {
   ],
 };
 
+// v2 community schema: likes/comments no longer require a wallet. Comments gain
+// a display_name and a nullable author_address; likes are deduplicated by a
+// liker_id (wallet address OR guest browser id) instead of by address only.
+// Runs as a single DO block so it is atomic and idempotent for databases that
+// already have the v1 tables (deployed before this change).
+async function repairCommunitySchemaV2(): Promise<void> {
+  const statement = `
+    DO $verida$
+    BEGIN
+      ALTER TABLE "community_comments" ADD COLUMN IF NOT EXISTS "display_name" text;
+      ALTER TABLE "community_comments" ALTER COLUMN "author_address" DROP NOT NULL;
+      ALTER TABLE "community_likes" ADD COLUMN IF NOT EXISTS "liker_id" text;
+      UPDATE "community_likes" SET "liker_id" = "liker_address" WHERE "liker_id" IS NULL AND "liker_address" IS NOT NULL;
+      UPDATE "community_likes" SET "liker_id" = 'legacy_' || "post_id"::text WHERE "liker_id" IS NULL;
+      ALTER TABLE "community_likes" ALTER COLUMN "liker_id" SET NOT NULL;
+      IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'community_likes_pkey') THEN
+        ALTER TABLE "community_likes" DROP CONSTRAINT "community_likes_pkey";
+      END IF;
+      ALTER TABLE "community_likes" ADD CONSTRAINT "community_likes_pkey" PRIMARY KEY ("post_id", "liker_id");
+      CREATE INDEX IF NOT EXISTS "community_likes_liker_id_idx" ON "community_likes" USING btree ("liker_id");
+    END $verida$;
+  `;
+  try {
+    await db.execute(sql.raw(statement));
+    console.log('[DB] Community schema v2 repair complete.');
+  } catch (cause: unknown) {
+    console.error('[DB] Community schema v2 repair failed:', cause);
+  }
+}
+
 async function repairSchema(): Promise<void> {
   const statements: string[] = [...TABLE_CREATES];
 
@@ -212,6 +244,9 @@ export async function runMigrations(): Promise<void> {
   } catch (cause: unknown) {
     console.error('[DB] Schema repair failed:', cause);
   }
+
+  // Community schema evolution (web2 likes/comments).
+  await repairCommunitySchemaV2();
 }
 
 const isMainModule =

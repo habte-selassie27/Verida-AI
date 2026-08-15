@@ -40,7 +40,14 @@ const postUpdateSchema = postCreateSchema
   });
 
 const commentCreateSchema = z.object({
+  address: z.string().trim().min(1).max(64).optional(),
   content: z.string().trim().min(1).max(2000),
+  displayName: z.string().trim().min(1).max(40).optional().nullable(),
+});
+
+const likeBodySchema = z.object({
+  address: z.string().trim().min(1).max(64).optional(),
+  likerId: z.string().trim().min(1).max(128),
 });
 
 const slugParamSchema = z.object({
@@ -130,9 +137,10 @@ function toPostResponse(post: {
 }
 
 function toCommentResponse(comment: {
-  authorAddress: string;
+  authorAddress: string | null;
   content: string;
   createdAt: string;
+  displayName: string | null;
   id: number;
   postId: number;
 }): Record<string, unknown> {
@@ -140,6 +148,7 @@ function toCommentResponse(comment: {
     author_address: comment.authorAddress,
     content: comment.content,
     created_at: comment.createdAt,
+    display_name: comment.displayName,
     id: comment.id,
     post_id: comment.postId,
   };
@@ -278,6 +287,7 @@ router.get(
           author_address: communityComments.authorAddress,
           content: communityComments.content,
           created_at: communityComments.createdAt,
+          display_name: communityComments.displayName,
           id: communityComments.id,
           post_id: communityComments.postId,
         })
@@ -292,7 +302,7 @@ router.get(
             .where(
               and(
                 eq(communityLikes.postId, post.id),
-                eq(communityLikes.likerAddress, viewer),
+                eq(communityLikes.likerId, viewer),
               ),
             )
             .limit(1),
@@ -472,13 +482,13 @@ router.delete(
   }),
 );
 
-// POST /api/community/posts/:id/comments — any authenticated wallet.
+// POST /api/community/posts/:id/comments — web2 style: no wallet required.
+// A wallet-connected author is stored as the address; everyone else gets a
+// display name (default "Guest") and stays anonymous.
 router.post(
   '/posts/:id/comments',
-  requireAuth,
   generalRateLimit,
   asyncHandler(async (request: Request, response: Response): Promise<void> => {
-    const authorAddress = getAuthenticatedAddress(request).toLowerCase();
     const parsedId = idParamSchema.safeParse({ id: request.params.id });
     if (!parsedId.success) {
       throw new ApiRouteError({
@@ -511,11 +521,15 @@ router.post(
       });
     }
 
+    const displayName = parsed.data.displayName?.trim().slice(0, 40) || 'Guest';
+    const authorAddress = parsed.data.address?.trim().toLowerCase() ?? null;
+
     const inserted = await db
       .insert(communityComments)
       .values({
         authorAddress,
         content: parsed.data.content,
+        displayName,
         postId: parsedId.data.id,
       })
       .returning();
@@ -563,10 +577,12 @@ router.delete(
       });
     }
 
-    if (commentRow.authorAddress.toLowerCase() !== callerAddress && callerAddress !== ADMIN_WALLET) {
+    const isAuthor = commentRow.authorAddress !== null
+      && commentRow.authorAddress.toLowerCase() === callerAddress;
+    if (!isAuthor && callerAddress !== ADMIN_WALLET) {
       throw new ApiRouteError({
         code: 'FORBIDDEN',
-        message: 'Only the comment author or the platform admin can delete this comment.',
+        message: 'Only the wallet-verified comment author or the platform admin can delete this comment.',
         statusCode: 403,
       });
     }
@@ -577,15 +593,15 @@ router.delete(
   }),
 );
 
-// POST /api/community/posts/:id/like — any authenticated wallet; toggles.
+// POST /api/community/posts/:id/like — web2 style: no wallet required. The
+// client sends a persistent identity (lowercased wallet address when connected,
+// otherwise a stable guest id), so one like per browser/identity per post.
 router.post(
   '/posts/:id/like',
-  requireAuth,
   generalRateLimit,
   asyncHandler(async (request: Request, response: Response): Promise<void> => {
-    const likerAddress = getAuthenticatedAddress(request).toLowerCase();
-    const parsed = idParamSchema.safeParse({ id: request.params.id });
-    if (!parsed.success) {
+    const parsedId = idParamSchema.safeParse({ id: request.params.id });
+    if (!parsedId.success) {
       throw new ApiRouteError({
         code: 'INVALID_POST_ID',
         message: 'Post id is invalid.',
@@ -593,26 +609,39 @@ router.post(
       });
     }
 
+    const parsed = likeBodySchema.safeParse(request.body);
+    if (!parsed.success) {
+      throw new ApiRouteError({
+        code: 'INVALID_BODY',
+        details: { issues: parsed.error.issues },
+        message: 'Invalid like payload.',
+        statusCode: 400,
+      });
+    }
+
     const existing = await db
       .select({ id: communityPosts.id })
       .from(communityPosts)
-      .where(eq(communityPosts.id, parsed.data.id))
+      .where(eq(communityPosts.id, parsedId.data.id))
       .limit(1);
     if (existing.at(0) === undefined) {
       throw new ApiRouteError({
         code: 'POST_NOT_FOUND',
-        message: `Community post ${parsed.data.id} was not found.`,
+        message: `Community post ${parsedId.data.id} was not found.`,
         statusCode: 404,
       });
     }
+
+    const likerId = parsed.data.likerId.toLowerCase().slice(0, 128);
+    const likerAddress = parsed.data.address?.trim().toLowerCase() ?? null;
 
     const likedRows = await db
       .select({ postId: communityLikes.postId })
       .from(communityLikes)
       .where(
         and(
-          eq(communityLikes.postId, parsed.data.id),
-          eq(communityLikes.likerAddress, likerAddress),
+          eq(communityLikes.postId, parsedId.data.id),
+          eq(communityLikes.likerId, likerId),
         ),
       )
       .limit(1);
@@ -623,23 +652,24 @@ router.post(
         .delete(communityLikes)
         .where(
           and(
-            eq(communityLikes.postId, parsed.data.id),
-            eq(communityLikes.likerAddress, likerAddress),
+            eq(communityLikes.postId, parsedId.data.id),
+            eq(communityLikes.likerId, likerId),
           ),
         );
       liked = false;
     } else {
       await db.insert(communityLikes).values({
         likerAddress,
-        postId: parsed.data.id,
+        likerId,
+        postId: parsedId.data.id,
       });
       liked = true;
     }
 
     const [countRow] = await db
-      .select({ likeCount: count(communityLikes.likerAddress) })
+      .select({ likeCount: count(communityLikes.likerId) })
       .from(communityLikes)
-      .where(eq(communityLikes.postId, parsed.data.id));
+      .where(eq(communityLikes.postId, parsedId.data.id));
 
     response.json({
       data: { liked, likeCount: Number(countRow?.likeCount ?? 0) },

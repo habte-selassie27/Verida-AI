@@ -291,9 +291,10 @@ export interface CommunityPost {
 }
 
 export interface CommunityComment {
-  author_address: string;
+  author_address: string | null;
   content: string;
   created_at: string;
+  display_name: string | null;
   id: number;
   post_id: number;
 }
@@ -348,9 +349,18 @@ function normalizeCommunityPost(raw: Record<string, unknown>): CommunityPost {
 
 function normalizeCommunityComment(raw: Record<string, unknown>): CommunityComment {
   return {
-    author_address: String(raw.author_address ?? raw.authorAddress ?? ''),
+    author_address: raw.author_address != null
+      ? String(raw.author_address)
+      : raw.authorAddress != null
+        ? String(raw.authorAddress)
+        : null,
     content: String(raw.content ?? ''),
     created_at: String(raw.created_at ?? raw.createdAt ?? ''),
+    display_name: raw.display_name != null
+      ? String(raw.display_name)
+      : raw.displayName != null
+        ? String(raw.displayName)
+        : null,
     id: Number(raw.id),
     post_id: Number(raw.post_id ?? raw.postId),
   };
@@ -411,10 +421,19 @@ export async function deleteCommunityPost(slug: string): Promise<{ deleted: bool
 export async function addCommunityComment(
   postId: number,
   content: string,
+  displayName?: string | null,
+  address?: string | null,
 ): Promise<{ comment: CommunityComment }> {
+  const body: Record<string, unknown> = { content };
+  if (displayName !== undefined && displayName !== null && displayName.trim().length > 0) {
+    body.displayName = displayName.trim();
+  }
+  if (address !== undefined && address !== null && address.trim().length > 0) {
+    body.address = address.trim();
+  }
   const data = await request<{ comment: Record<string, unknown> }>(`/api/community/posts/${postId}/comments`, {
     method: 'POST',
-    body: JSON.stringify({ content }),
+    body: JSON.stringify(body),
   });
   return { comment: normalizeCommunityComment(data.comment) };
 }
@@ -425,9 +444,18 @@ export async function deleteCommunityComment(commentId: number): Promise<{ delet
   });
 }
 
-export async function toggleCommunityLike(postId: number): Promise<{ liked: boolean; likeCount: number }> {
+export async function toggleCommunityLike(
+  postId: number,
+  likerId: string,
+  address?: string | null,
+): Promise<{ liked: boolean; likeCount: number }> {
+  const body: Record<string, unknown> = { likerId };
+  if (address !== undefined && address !== null && address.trim().length > 0) {
+    body.address = address.trim();
+  }
   return request<{ liked: boolean; likeCount: number }>(`/api/community/posts/${postId}/like`, {
     method: 'POST',
+    body: JSON.stringify(body),
   });
 }
 

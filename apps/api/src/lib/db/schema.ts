@@ -313,7 +313,9 @@ export const communityComments = pgTable(
     postId: integer('post_id')
       .notNull()
       .references(() => communityPosts.id, { onDelete: 'cascade' }),
-    authorAddress: text('author_address').notNull(),
+    // Null for guest (web2) comments; set when the author is wallet-connected.
+    authorAddress: text('author_address'),
+    displayName: text('display_name'),
     content: text('content').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
   },
@@ -329,13 +331,16 @@ export const communityLikes = pgTable(
     postId: integer('post_id')
       .notNull()
       .references(() => communityPosts.id, { onDelete: 'cascade' }),
-    likerAddress: text('liker_address').notNull(),
+    // Identity key: a lowercased wallet address OR a persistent guest id.
+    likerId: text('liker_id').notNull(),
+    likerAddress: text('liker_address'),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
   },
   (table) => ({
-    // One like per wallet per post.
-    pk: primaryKey({ columns: [table.postId, table.likerAddress] }),
+    // One like per identity per post.
+    pk: primaryKey({ columns: [table.postId, table.likerId] }),
     postIdx: index('community_likes_post_idx').on(table.postId),
+    likerIdIdx: index('community_likes_liker_id_idx').on(table.likerId),
   }),
 );
 

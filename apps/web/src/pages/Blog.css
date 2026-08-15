@@ -599,6 +599,20 @@
   color: var(--text-tertiary);
 }
 
+.blog-comment-author {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.blog-comment-wallet {
+  opacity: 0.7;
+}
+
 .blog-comment-delete {
   display: inline-flex;
   align-items: center;
