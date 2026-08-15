@@ -94,6 +94,57 @@ function requireAdminWallet(request: Request): string {
   return address;
 }
 
+// Drizzle `.returning()` rows use camelCase property names (authorAddress,
+// publishedAt, createdAt) while the GET endpoints project snake_case columns
+// (author_address, published_at, created_at). Normalize write responses to the
+// same snake_case shape the frontend reads, or the UI crashes on undefined
+// fields when it prepends a freshly created comment/post to a list.
+function toPostResponse(post: {
+  authorAddress: string;
+  category: string;
+  content: string;
+  createdAt: string;
+  excerpt: string | null;
+  featured: boolean;
+  id: number;
+  publishedAt: string | null;
+  slug: string;
+  status: string;
+  title: string;
+  updatedAt: string;
+}): Record<string, unknown> {
+  return {
+    author_address: post.authorAddress,
+    category: post.category,
+    content: post.content,
+    created_at: post.createdAt,
+    excerpt: post.excerpt,
+    featured: post.featured,
+    id: post.id,
+    published_at: post.publishedAt,
+    slug: post.slug,
+    status: post.status,
+    title: post.title,
+    updated_at: post.updatedAt,
+  };
+}
+
+function toCommentResponse(comment: {
+  authorAddress: string;
+  content: string;
+  createdAt: string;
+  id: number;
+  postId: number;
+}): Record<string, unknown> {
+  return {
+    author_address: comment.authorAddress,
+    content: comment.content,
+    created_at: comment.createdAt,
+    id: comment.id,
+    post_id: comment.postId,
+  };
+}
+
 const commentCountSubquery = db
   .select({
     commentCount: count(communityComments.id).as('comment_count'),
@@ -302,7 +353,7 @@ router.post(
       });
     }
 
-    response.status(201).json({ data: { post }, success: true });
+    response.status(201).json({ data: { post: toPostResponse(post) }, success: true });
   }),
 );
 
@@ -377,7 +428,7 @@ router.patch(
       });
     }
 
-    response.json({ data: { post }, success: true });
+    response.json({ data: { post: toPostResponse(post) }, success: true });
   }),
 );
 
@@ -478,7 +529,7 @@ router.post(
       });
     }
 
-    response.status(201).json({ data: { comment }, success: true });
+    response.status(201).json({ data: { comment: toCommentResponse(comment) }, success: true });
   }),
 );
 

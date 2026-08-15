@@ -313,11 +313,55 @@ export interface CommunityPostPayload {
   title: string;
 }
 
+// The API can return rows in either snake_case (GET projections) or camelCase
+// (Drizzle .returning() on writes). Normalize both to the typed shape so the
+// UI never crashes on undefined fields.
+function normalizeCommunityPost(raw: Record<string, unknown>): CommunityPost {
+  const post: CommunityPost = {
+    author_address: String(raw.author_address ?? raw.authorAddress ?? ''),
+    author_username: raw.author_username != null ? String(raw.author_username) : null,
+    category: String(raw.category ?? ''),
+    comment_count: Number(raw.comment_count ?? raw.commentCount ?? 0),
+    created_at: String(raw.created_at ?? raw.createdAt ?? ''),
+    excerpt: raw.excerpt != null ? String(raw.excerpt) : null,
+    featured: Boolean(raw.featured),
+    id: Number(raw.id),
+    like_count: Number(raw.like_count ?? raw.likeCount ?? 0),
+    published_at: raw.published_at != null
+      ? String(raw.published_at)
+      : raw.publishedAt != null
+        ? String(raw.publishedAt)
+        : null,
+    slug: String(raw.slug ?? ''),
+    title: String(raw.title ?? ''),
+  };
+  if (raw.content != null) {
+    post.content = String(raw.content);
+  }
+  if (raw.updated_at != null) {
+    post.updated_at = String(raw.updated_at);
+  } else if (raw.updatedAt != null) {
+    post.updated_at = String(raw.updatedAt);
+  }
+  return post;
+}
+
+function normalizeCommunityComment(raw: Record<string, unknown>): CommunityComment {
+  return {
+    author_address: String(raw.author_address ?? raw.authorAddress ?? ''),
+    content: String(raw.content ?? ''),
+    created_at: String(raw.created_at ?? raw.createdAt ?? ''),
+    id: Number(raw.id),
+    post_id: Number(raw.post_id ?? raw.postId),
+  };
+}
+
 export async function getCommunityPosts(
   category?: string,
 ): Promise<{ items: CommunityPost[]; totalItems: number }> {
   const query = category ? `?category=${encodeURIComponent(category)}` : '';
-  return request<{ items: CommunityPost[]; totalItems: number }>(`/api/community/posts${query}`);
+  const data = await request<{ items: Record<string, unknown>[]; totalItems: number }>(`/api/community/posts${query}`);
+  return { items: data.items.map(normalizeCommunityPost), totalItems: data.totalItems };
 }
 
 export async function getCommunityPost(
@@ -325,26 +369,37 @@ export async function getCommunityPost(
   viewer?: string | null,
 ): Promise<CommunityPostDetail> {
   const query = viewer ? `?viewer=${encodeURIComponent(viewer)}` : '';
-  return request<CommunityPostDetail>(`/api/community/posts/${encodeURIComponent(slug)}${query}`);
+  const data = await request<{
+    comments: Record<string, unknown>[];
+    liked_by_viewer: boolean;
+    post: Record<string, unknown>;
+  }>(`/api/community/posts/${encodeURIComponent(slug)}${query}`);
+  return {
+    comments: data.comments.map(normalizeCommunityComment),
+    liked_by_viewer: Boolean(data.liked_by_viewer),
+    post: normalizeCommunityPost(data.post),
+  };
 }
 
 export async function createCommunityPost(
   payload: CommunityPostPayload,
 ): Promise<{ post: CommunityPost }> {
-  return request<{ post: CommunityPost }>('/api/community/posts', {
+  const data = await request<{ post: Record<string, unknown> }>('/api/community/posts', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
+  return { post: normalizeCommunityPost(data.post) };
 }
 
 export async function updateCommunityPost(
   slug: string,
   payload: Partial<CommunityPostPayload>,
 ): Promise<{ post: CommunityPost }> {
-  return request<{ post: CommunityPost }>(`/api/community/posts/${encodeURIComponent(slug)}`, {
+  const data = await request<{ post: Record<string, unknown> }>(`/api/community/posts/${encodeURIComponent(slug)}`, {
     method: 'PATCH',
     body: JSON.stringify(payload),
   });
+  return { post: normalizeCommunityPost(data.post) };
 }
 
 export async function deleteCommunityPost(slug: string): Promise<{ deleted: boolean }> {
@@ -357,10 +412,11 @@ export async function addCommunityComment(
   postId: number,
   content: string,
 ): Promise<{ comment: CommunityComment }> {
-  return request<{ comment: CommunityComment }>(`/api/community/posts/${postId}/comments`, {
+  const data = await request<{ comment: Record<string, unknown> }>(`/api/community/posts/${postId}/comments`, {
     method: 'POST',
     body: JSON.stringify({ content }),
   });
+  return { comment: normalizeCommunityComment(data.comment) };
 }
 
 export async function deleteCommunityComment(commentId: number): Promise<{ deleted: boolean }> {

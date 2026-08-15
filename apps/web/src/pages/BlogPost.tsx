@@ -268,7 +268,9 @@ export default function BlogPost() {
             <div className="blog-comment-list">
               {comments.map((comment) => {
                 const canDelete =
-                  (connected && address !== null && comment.author_address.toLowerCase() === address.toLowerCase()) ||
+                  (connected &&
+                    address !== null &&
+                    (comment.author_address ?? '').toLowerCase() === address.toLowerCase()) ||
                   isAdmin;
                 return (
                   <div key={comment.id} className="blog-comment">
