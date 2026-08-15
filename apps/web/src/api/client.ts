@@ -38,7 +38,7 @@ class ApiError extends Error {
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const attempt = (): Promise<Response> => fetch(`${API_BASE}${path}`, {
     headers: {
       'Content-Type': 'application/json',
       ...getAuthHeaders(),
@@ -46,6 +46,17 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     },
     ...options,
   });
+
+  let res: Response;
+  try {
+    res = await attempt();
+  } catch (networkError) {
+    // Transient network failures (Render free-tier cold start after idle,
+    // DNS blips, deploy restarts) surface as TypeError / ERR_NAME_NOT_RESOLVED.
+    // Retry once after a short pause before surfacing "Failed to fetch".
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    res = await attempt();
+  }
 
   const body = (await res.json()) as APIResponse<T>;
 
