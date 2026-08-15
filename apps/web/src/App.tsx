@@ -22,6 +22,8 @@ import SDKDetail from './pages/SDKDetail';
 import CLI from './pages/CLI';
 import GitHubPage from './pages/GitHub';
 import Blog from './pages/Blog';
+import BlogPost from './pages/BlogPost';
+import BlogPostEditor from './pages/BlogPostEditor';
 import ShelbyNetwork from './pages/Network';
 import Status from './pages/Status';
 import Forbidden from './pages/Forbidden';
@@ -91,6 +93,9 @@ export default function App() {
 
               {/* ─── Community ────────────────────────────────────────── */}
               <Route path="/blog" element={<Blog />} />
+              <Route path="/blog/new" element={<BlogPostEditor />} />
+              <Route path="/blog/:slug" element={<BlogPost />} />
+              <Route path="/blog/:slug/edit" element={<BlogPostEditor />} />
 
               {/* ─── Network ──────────────────────────────────────────── */}
               <Route path="/network" element={<ShelbyNetwork />} />

@@ -32,6 +32,7 @@ import { closeAiRedis } from './ai/serving/cache.js';
 import { closeRateLimitRedisClient, generalRateLimit } from './middleware/rateLimit.js';
 import { accessRouter } from './routes/access.js';
 import { authRouter } from './routes/auth.js';
+import { communityRouter } from './routes/community.js';
 import { ApiRouteError, datasetsRouter } from './routes/datasets.js';
 import { escrowRouter } from './routes/escrow.js';
 import { publishersRouter } from './routes/publishers.js';
@@ -248,6 +249,7 @@ app.get('/api/price/apt', asyncHandler(async (_request: Request, response: Respo
 }));
 
   app.use('/api/auth', authRouter);
+  app.use('/api/community', communityRouter);
   app.use('/api/datasets', datasetsRouter);
   app.use('/api', accessRouter);
   app.use('/api', escrowRouter);

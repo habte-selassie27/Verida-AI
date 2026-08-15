@@ -3,6 +3,7 @@ import { db } from '../lib/db/index.js';
 import { datasets, publishers } from '../lib/db/schema.js';
 import { sql } from 'drizzle-orm';
 import type { AccessType, DatasetModality, DatasetTag, SchemaProfile } from '@verida/shared';
+import { seedCommunityPosts } from '../lib/community/seed.js';
 
 const router = Router();
 
@@ -550,8 +551,12 @@ router.post('/admin/seed', async (req, res) => {
       .set({ totalDatasets: 0 })
       .where(sql`${publishers.address} <> ${ADMIN_WALLET}`);
 
+    // Seed the community blog posts (idempotent by slug) so the Community
+    // page shows real data the admin can edit/delete from the UI.
+    const seededPosts = await seedCommunityPosts(db, ADMIN_WALLET);
+
     res.json({
-      message: `Seeded ${DEMO_DATASETS.length} datasets across ${DEMO_PUBLISHERS.length} publishers.`,
+      message: `Seeded ${DEMO_DATASETS.length} datasets across ${DEMO_PUBLISHERS.length} publishers and ${seededPosts} community posts.`,
       success: true,
     });
   } catch (err: unknown) {

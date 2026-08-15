@@ -6,6 +6,40 @@ import { sql } from 'drizzle-orm';
 
 import { db } from './index.js';
 
+// Idempotent full-table creation for tables added after the original Drizzle
+// migrations were written. CREATE TABLE IF NOT EXISTS is safe to run on every
+// boot (existing tables no-op), so new tables reach both fresh and deployed
+// databases without hand-editing the Drizzle migration journal.
+const TABLE_CREATES: string[] = [
+  `CREATE TABLE IF NOT EXISTS "community_posts" (
+    "id" serial PRIMARY KEY NOT NULL,
+    "title" text NOT NULL,
+    "slug" text NOT NULL,
+    "category" text NOT NULL,
+    "excerpt" text,
+    "content" text NOT NULL,
+    "author_address" text NOT NULL,
+    "featured" boolean DEFAULT false NOT NULL,
+    "status" text DEFAULT 'published' NOT NULL,
+    "published_at" timestamp with time zone,
+    "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT now() NOT NULL
+  );`,
+  `CREATE TABLE IF NOT EXISTS "community_comments" (
+    "id" serial PRIMARY KEY NOT NULL,
+    "post_id" integer NOT NULL REFERENCES "community_posts"("id") ON DELETE CASCADE,
+    "author_address" text NOT NULL,
+    "content" text NOT NULL,
+    "created_at" timestamp with time zone DEFAULT now() NOT NULL
+  );`,
+  `CREATE TABLE IF NOT EXISTS "community_likes" (
+    "post_id" integer NOT NULL REFERENCES "community_posts"("id") ON DELETE CASCADE,
+    "liker_address" text NOT NULL,
+    "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+    PRIMARY KEY ("post_id", "liker_address")
+  );`,
+];
+
 // Idempotent column definitions for every table in schema.ts. These repair
 // tables that were created outside Drizzle tracking (before migrations were
 // introduced), where CREATE TABLE IF NOT EXISTS would silently no-op and
@@ -79,6 +113,18 @@ const TABLE_COLUMNS: Record<string, string[]> = {
 };
 
 const TABLE_INDEXES: Record<string, string[]> = {
+  community_posts: [
+    `CREATE UNIQUE INDEX IF NOT EXISTS "community_posts_slug_unique" ON "community_posts" USING btree ("slug")`,
+    `CREATE INDEX IF NOT EXISTS "community_posts_status_idx" ON "community_posts" USING btree ("status", "published_at")`,
+    `CREATE INDEX IF NOT EXISTS "community_posts_category_idx" ON "community_posts" USING btree ("category")`,
+  ],
+  community_comments: [
+    `CREATE INDEX IF NOT EXISTS "community_comments_post_idx" ON "community_comments" USING btree ("post_id")`,
+    `CREATE INDEX IF NOT EXISTS "community_comments_author_idx" ON "community_comments" USING btree ("author_address")`,
+  ],
+  community_likes: [
+    `CREATE INDEX IF NOT EXISTS "community_likes_post_idx" ON "community_likes" USING btree ("post_id")`,
+  ],
   datasets: [
     `CREATE UNIQUE INDEX IF NOT EXISTS "datasets_shelby_blob_id_unique" ON "datasets" USING btree ("shelby_blob_id")`,
     `CREATE INDEX IF NOT EXISTS "datasets_publisher_address_idx" ON "datasets" USING btree ("publisher_address")`,
@@ -105,7 +151,7 @@ const TABLE_INDEXES: Record<string, string[]> = {
 };
 
 async function repairSchema(): Promise<void> {
-  const statements: string[] = [];
+  const statements: string[] = [...TABLE_CREATES];
 
   for (const [table, columns] of Object.entries(TABLE_COLUMNS)) {
     for (const column of columns) {

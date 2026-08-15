@@ -271,6 +271,110 @@ export async function transferDatasetOwnership(
   });
 }
 
+// ─── Community (blog) ────────────────────────────────────────────────────────
+
+export interface CommunityPost {
+  author_address: string;
+  author_username: string | null;
+  category: string;
+  comment_count: number;
+  content?: string;
+  created_at: string;
+  excerpt: string | null;
+  featured: boolean;
+  id: number;
+  like_count: number;
+  published_at: string | null;
+  slug: string;
+  title: string;
+  updated_at?: string;
+}
+
+export interface CommunityComment {
+  author_address: string;
+  content: string;
+  created_at: string;
+  id: number;
+  post_id: number;
+}
+
+export interface CommunityPostDetail {
+  comments: CommunityComment[];
+  liked_by_viewer: boolean;
+  post: CommunityPost;
+}
+
+export interface CommunityPostPayload {
+  category: string;
+  content: string;
+  excerpt?: string | null;
+  featured?: boolean;
+  slug?: string;
+  title: string;
+}
+
+export async function getCommunityPosts(
+  category?: string,
+): Promise<{ items: CommunityPost[]; totalItems: number }> {
+  const query = category ? `?category=${encodeURIComponent(category)}` : '';
+  return request<{ items: CommunityPost[]; totalItems: number }>(`/api/community/posts${query}`);
+}
+
+export async function getCommunityPost(
+  slug: string,
+  viewer?: string | null,
+): Promise<CommunityPostDetail> {
+  const query = viewer ? `?viewer=${encodeURIComponent(viewer)}` : '';
+  return request<CommunityPostDetail>(`/api/community/posts/${encodeURIComponent(slug)}${query}`);
+}
+
+export async function createCommunityPost(
+  payload: CommunityPostPayload,
+): Promise<{ post: CommunityPost }> {
+  return request<{ post: CommunityPost }>('/api/community/posts', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateCommunityPost(
+  slug: string,
+  payload: Partial<CommunityPostPayload>,
+): Promise<{ post: CommunityPost }> {
+  return request<{ post: CommunityPost }>(`/api/community/posts/${encodeURIComponent(slug)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteCommunityPost(slug: string): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(`/api/community/posts/${encodeURIComponent(slug)}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function addCommunityComment(
+  postId: number,
+  content: string,
+): Promise<{ comment: CommunityComment }> {
+  return request<{ comment: CommunityComment }>(`/api/community/posts/${postId}/comments`, {
+    method: 'POST',
+    body: JSON.stringify({ content }),
+  });
+}
+
+export async function deleteCommunityComment(commentId: number): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(`/api/community/comments/${commentId}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function toggleCommunityLike(postId: number): Promise<{ liked: boolean; likeCount: number }> {
+  return request<{ liked: boolean; likeCount: number }>(`/api/community/posts/${postId}/like`, {
+    method: 'POST',
+  });
+}
+
 export async function verifyDataset(id: number): Promise<{ jobId: string }> {
   const token = getStoredToken();
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };

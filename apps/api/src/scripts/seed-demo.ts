@@ -2,6 +2,7 @@ import { db } from '../lib/db/index.js';
 import { datasets, publishers } from '../lib/db/schema.js';
 import { sql } from 'drizzle-orm';
 import type { AccessType, DatasetModality, DatasetTag, SchemaProfile } from '@verida/shared';
+import { seedCommunityPosts } from '../lib/community/seed.js';
 
 const ADMIN_WALLET = process.env.VITE_MARKETPLACE_CONTRACT_ADDRESS ?? '0x141a8b5da194f039af93bdb7df81824a506fe73cade01138d2309aa7d497fddd';
 
@@ -303,6 +304,12 @@ async function seed() {
   for (const pub of DEMO_PUBLISHERS) {
     const count = DEMO_DATASETS.filter(d => d.publisher_idx === DEMO_PUBLISHERS.indexOf(pub)).length;
     await db.update(publishers).set({ totalDatasets: count }).where(sql`${publishers.address} = ${pub.address}`);
+  }
+
+  // Seed the community blog posts (idempotent by slug).
+  const seededPosts = await seedCommunityPosts(db, ADMIN_WALLET);
+  if (seededPosts > 0) {
+    console.log(`  ✓ ${seededPosts} community posts`);
   }
 
   console.log(`\nSeeded ${DEMO_DATASETS.length} datasets across ${DEMO_PUBLISHERS.length} publishers.`);

@@ -13,6 +13,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   real,
   serial,
   text,
@@ -277,6 +278,64 @@ export const onChainPayments = pgTable(
     datasetIdx: index('on_chain_payments_dataset_idx').on(table.datasetId),
     timestampIdx: index('on_chain_payments_timestamp_idx').on(table.timestamp),
     txHashUniqueIdx: uniqueIndex('on_chain_payments_tx_hash_unique').on(table.txHash),
+  }),
+);
+
+export const communityPosts = pgTable(
+  'community_posts',
+  {
+    id: serial('id').primaryKey(),
+    title: text('title').notNull(),
+    slug: text('slug').notNull(),
+    category: text('category').notNull(),
+    excerpt: text('excerpt'),
+    content: text('content').notNull(),
+    // Plain address text (no FK) — authors may not exist in the publishers
+    // table, and the seed flow deletes/recreates publishers.
+    authorAddress: text('author_address').notNull(),
+    featured: boolean('featured').notNull().default(false),
+    status: text('status').notNull().default('published'),
+    publishedAt: timestamp('published_at', { withTimezone: true, mode: 'string' }),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
+  },
+  (table) => ({
+    slugUniqueIdx: uniqueIndex('community_posts_slug_unique').on(table.slug),
+    statusIdx: index('community_posts_status_idx').on(table.status, table.publishedAt),
+    categoryIdx: index('community_posts_category_idx').on(table.category),
+  }),
+);
+
+export const communityComments = pgTable(
+  'community_comments',
+  {
+    id: serial('id').primaryKey(),
+    postId: integer('post_id')
+      .notNull()
+      .references(() => communityPosts.id, { onDelete: 'cascade' }),
+    authorAddress: text('author_address').notNull(),
+    content: text('content').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
+  },
+  (table) => ({
+    postIdx: index('community_comments_post_idx').on(table.postId),
+    authorIdx: index('community_comments_author_idx').on(table.authorAddress),
+  }),
+);
+
+export const communityLikes = pgTable(
+  'community_likes',
+  {
+    postId: integer('post_id')
+      .notNull()
+      .references(() => communityPosts.id, { onDelete: 'cascade' }),
+    likerAddress: text('liker_address').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
+  },
+  (table) => ({
+    // One like per wallet per post.
+    pk: primaryKey({ columns: [table.postId, table.likerAddress] }),
+    postIdx: index('community_likes_post_idx').on(table.postId),
   }),
 );
 
