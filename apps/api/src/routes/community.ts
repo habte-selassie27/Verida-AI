@@ -40,13 +40,13 @@ const postUpdateSchema = postCreateSchema
   });
 
 const commentCreateSchema = z.object({
-  address: z.string().trim().min(1).max(64).optional(),
+  address: z.string().trim().min(1).max(66).optional(),
   content: z.string().trim().min(1).max(2000),
   displayName: z.string().trim().min(1).max(40).optional().nullable(),
 });
 
 const likeBodySchema = z.object({
-  address: z.string().trim().min(1).max(64).optional(),
+  address: z.string().trim().min(1).max(66).optional(),
   likerId: z.string().trim().min(1).max(128),
 });
 
