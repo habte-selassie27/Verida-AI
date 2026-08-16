@@ -20,7 +20,8 @@ import { eq, sql } from 'drizzle-orm';
 import { closeDb, db } from './lib/db/index.js';
 import { accessSessions, datasets } from './lib/db/schema.js';
 import { runMigrations } from './lib/db/migrate.js';
-import { isShelbyAvailable } from './lib/shelby/client.js';
+import { getShelbyRpcBaseUrl, isShelbyAvailable } from './lib/shelby/client.js';
+import { isCloudinaryAvailable } from './lib/shelby/cloudinary.js';
 import { closeUploadQueue } from './lib/queue/queue.js';
 import { closeUploadWorker, UploadWorker } from './lib/queue/workers/uploadWorker.js';
 import { closeVerifyWorker, VerifyWorker } from './lib/queue/workers/verifyWorker.js';
@@ -102,6 +103,54 @@ app.get('/healthz', asyncHandler(async (_request: Request, response: Response): 
     data: {
       shelby: shelbyOk ? 'connected' : 'unavailable',
       status,
+      timestamp: new Date().toISOString(),
+    },
+    success: true,
+  });
+}));
+
+// Storage-layer health: probes the configured Shelby RPC for reachability and
+// reports whether the Cloudinary backup is configured. Use this after a
+// deployment to confirm SHELBY_RPC_URL actually routes to a live node (the
+// classic failure is a URL that only feeds the health probe and is ignored by
+// putBlob/getBlob).
+app.get('/health/storage', asyncHandler(async (_request: Request, response: Response): Promise<void> => {
+  let rpcBaseUrl = '';
+  let rpcReachable = false;
+
+  try {
+    rpcBaseUrl = await getShelbyRpcBaseUrl();
+  } catch (cause: unknown) {
+    console.warn('[Health] Shelby runtime init failed:', cause instanceof Error ? cause.message : cause);
+  }
+
+  if (rpcBaseUrl.length > 0) {
+    try {
+      // The shelbynet storage RPC answers unknown-blob probes with a
+      // structured HTTP 404 ("Blob ... does not exist") when it is up, so any
+      // response below 500 proves reachability; only a network failure throws.
+      const res = await fetch(`${rpcBaseUrl}/v1/blobs/0x1/__healthcheck__`, {
+        method: 'GET',
+        signal: AbortSignal.timeout(5000),
+      });
+      rpcReachable = res.status < 500;
+    } catch (cause: unknown) {
+      console.warn('[Health] Shelby RPC probe failed:', cause instanceof Error ? cause.message : cause);
+    }
+  }
+
+  const cloudinaryConfigured = isCloudinaryAvailable();
+
+  response.status(200).json({
+    data: {
+      shelby: {
+        rpcBaseUrl: rpcBaseUrl || null,
+        rpc: rpcReachable ? 'reachable' : 'unreachable',
+      },
+      cloudinary: {
+        configured: cloudinaryConfigured,
+      },
+      status: rpcReachable ? 'ok' : 'degraded',
       timestamp: new Date().toISOString(),
     },
     success: true,

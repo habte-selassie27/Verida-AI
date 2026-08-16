@@ -6,7 +6,7 @@
 // HANDOFF TO TESTER: Verify singleton initialization, env parsing, blob id helpers, and error typing work under mocked SDKs.
 
 import { Account, AccountAddress, Aptos, AptosConfig, Ed25519Account, Ed25519PrivateKey, Network } from '@aptos-labs/ts-sdk';
-import { ShelbyNodeClient } from '@shelby-protocol/sdk/node';
+import { NetworkToShelbyBlobIndexerBaseUrl, NetworkToShelbyRPCBaseUrl, ShelbyNodeClient } from '@shelby-protocol/sdk/node';
 import type { AccessType, DatasetTag, ProvenanceReceipt } from '@verida/shared';
 
 import type { ProvenanceEventType } from '../db/schema.js';
@@ -182,18 +182,35 @@ async function initializeShelbyRuntime(): Promise<ShelbyRuntimeState> {
       throw new ShelbyConfigurationError(`Unsupported SHELBY_NETWORK value: ${normalizedNetwork}`);
   }
 
-  const defaultRpcBaseUrl =
-    normalizedNetwork === 'testnet'
-      ? 'https://api.testnet.shelby.xyz/shelby'
-      : normalizedNetwork === 'shelbynet'
-        ? 'https://api.shelbynet.shelby.xyz/shelby'
-        : 'http://localhost:9090';
-
+  // SHELBY_RPC_URL must be handed to the SDK client itself. The SDK's
+  // ShelbyRPCClient resolves its base URL from config.rpc.baseUrl (falling
+  // back to its own compiled-in default), so an env var that is only used for
+  // the health probe below is ignored by putBlob/getBlob — the classic
+  // "Shelby RPC URL does nothing" failure. Default to the SDK's own
+  // shelbynet default so a missing env var still hits the live RPC.
+  const defaultRpcBaseUrl = NetworkToShelbyRPCBaseUrl[shelbyClientNetwork] ?? 'http://localhost:9090';
   const rpcBaseUrl = (process.env.SHELBY_RPC_URL?.trim() ?? defaultRpcBaseUrl).replace(/\/+$/, '');
+
+  // Indexer (GraphQL) endpoint. Defaults to the SDK's shelbynet indexer; the
+  // public nocode endpoint used by older SDK versions is retired.
+  const defaultIndexerBaseUrl = NetworkToShelbyBlobIndexerBaseUrl[shelbyClientNetwork] ?? '';
+  const indexerBaseUrl =
+    process.env.SHELBY_INDEXER_URL?.trim() || defaultIndexerBaseUrl || undefined;
+
   const client = new ShelbyNodeClient({
     network: shelbyClientNetwork,
     apiKey,
     deployer: AccountAddress.fromString('0x85fdb9a176ab8ef1d9d9c1b60d60b3924f0800ac1de1cc2085fb0b8bb4988e6a'),
+    rpc: {
+      baseUrl: rpcBaseUrl,
+      apiKey,
+    },
+    indexer: indexerBaseUrl
+      ? {
+          baseUrl: indexerBaseUrl,
+          apiKey,
+        }
+      : undefined,
   });
   // NOTE: SHELBY_API_KEY is a Shelby *storage* key and must NOT be attached
   // to the Aptos fullnode client. The shelbynet RPC rejects any request that
@@ -210,6 +227,9 @@ async function initializeShelbyRuntime(): Promise<ShelbyRuntimeState> {
 
   if (process.env.NODE_ENV !== 'test' && process.env.VITEST !== 'true') {
     try {
+      // The shelbynet storage RPC answers unknown-blob probes with HTTP 404
+      // ("Blob ... does not exist") when it is up, so any structured response
+      // proves reachability; only a network failure throws here.
       await fetch(`${rpcBaseUrl}/v1/blobs/0x1/__healthcheck__`, { method: 'GET' });
     } catch (cause: unknown) {
       throw new ShelbyClientError('Shelby RPC connection test failed.', { cause });

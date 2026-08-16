@@ -1,7 +1,7 @@
-// IMPLEMENTER NOTE: Checks Shelby blob integrity, persists tamper evidence, and returns a typed verification result.
+// IMPLEMENTER NOTE: Checks Shelby blob integrity by downloading the actual bytes (disk -> Cloudinary -> Shelby RPC), compares SHA-256 to the stored root, and persists tamper evidence. On-chain metadata is best-effort provenance evidence, never the source of truth.
 // BUILD.md TASK: STEP 4 — Shelby SDK Integration Layer
 // ARCHITECT CONTRACT: verifyIntegrity(blobId, expectedMerkleRoot) with tamper detection persistence
-// SHELBY SDK METHODS: getBlobMetadata via the Shelby coordination client
+// SHELBY SDK METHODS: getFullObjectMetadata + getBlobs via the Shelby coordination client, ShelbyNodeClient.download for byte recovery
 // DB TABLES: datasets, provenance_chain
 // HANDOFF TO TESTER: Verify invalid roots mark datasets.tampered, write provenance events, and return a false result.
 
@@ -22,18 +22,6 @@ import { isCloudinaryAvailable, downloadFromCloudinary, getCloudinaryFolder } fr
 
 const LOCAL_BLOBS_DIR = join(process.cwd(), '.shelby-blobs');
 
-interface ShelbyBlobMetadataLike {
-  blobMerkleRoot?: unknown;
-  creationMicros?: number;
-  expirationMicros?: number;
-  isWritten?: boolean;
-  isDeleted?: boolean;
-  name?: string;
-  owner?: unknown;
-  size?: number;
-  storage?: 'local' | 'remote';
-}
-
 interface DatasetVerificationLookup {
   id: number;
   version: number;
@@ -42,45 +30,12 @@ interface DatasetVerificationLookup {
   shelbyBlobId: string;
 }
 
-async function extractMerkleRoot(metadata: ShelbyBlobMetadataLike): Promise<string> {
-  const candidate = metadata.blobMerkleRoot;
-
-  if (typeof candidate === 'string') {
-    return candidate;
-  }
-
-  if (candidate instanceof Uint8Array) {
-    return `0x${Array.from(candidate)
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('')}`;
-  }
-
-  if (candidate !== null && typeof candidate === 'object') {
-    const record = candidate as Record<string, unknown>;
-    const possibleKeys = ['blobMerkleRoot', 'merkleRoot', 'root', 'hash', 'value'];
-
-    for (const key of possibleKeys) {
-      const value = record[key];
-      if (typeof value === 'string') {
-        return value;
-      }
-      if (value instanceof Uint8Array) {
-        return `0x${Array.from(value)
-          .map((b) => b.toString(16).padStart(2, '0'))
-          .join('')}`;
-      }
-    }
-  }
-
-  throw new ShelbyVerificationError('Shelby metadata did not contain a readable merkle root.');
-}
-
 async function persistTamperEvidence(
   blobId: string,
   normalizedExpected: string,
   normalizedActual: string,
   checkedAt: number,
-  metadata: ShelbyBlobMetadataLike,
+  details: Record<string, unknown>,
 ): Promise<{ checkedAt: number; details: Record<string, unknown>; valid: boolean }> {
   const datasetRows = await db
     .select({
@@ -133,105 +88,55 @@ async function persistTamperEvidence(
     details: {
       expectedMerkleRoot: normalizedExpected,
       actualMerkleRoot: normalizedActual,
-      blobMetadata: metadata,
+      ...details,
     },
   };
 }
 
-async function fetchBlobMetadataViaIndexer(
-  runtime: Awaited<ReturnType<typeof getShelbyRuntime>>,
-  accountAddress: string,
-  blobName: string,
-): Promise<ShelbyBlobMetadataLike | undefined> {
-  try {
-    const blobs = await runtime.client.coordination.getBlobs({
-      where: {
-        owner: { _eq: accountAddress.toLowerCase() },
-        blob_name: { _eq: blobName },
-      },
-      pagination: { limit: 1 },
-    });
-
-    if (!blobs || blobs.length === 0) {
-      return undefined;
-    }
-
-    const blob = blobs[0] as unknown as {
-      blob_commitment?: string;
-      created_at?: number;
-      expires_at?: number;
-      is_written?: boolean;
-      is_deleted?: boolean;
-      size?: number;
-    };
-    return {
-      blobMerkleRoot: blob.blob_commitment,
-      creationMicros: blob.created_at,
-      expirationMicros: blob.expires_at,
-      isWritten: blob.is_written,
-      isDeleted: blob.is_deleted,
-      name: blobName,
-      size: typeof blob.size === 'number' ? blob.size : undefined,
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-async function verifyOnChain(
+/**
+ * Best-effort on-chain provenance lookup. The on-chain merkle root is the
+ * erasure-coded commitment root (different from the raw SHA-256 stored in the
+ * DB), so it is NEVER compared for validity — it exists only as provenance
+ * evidence that the blob was registered. Failures are logged, not thrown.
+ */
+async function fetchOnChainEvidence(
   blobId: string,
-  expectedMerkleRoot: string,
-): Promise<{ checkedAt: number; details: Record<string, unknown>; valid: boolean }> {
-  const runtime = await getShelbyRuntime();
-  const { accountAddress, blobName } = await parseBlobId(blobId);
-
-  let metadata: ShelbyBlobMetadataLike | undefined;
-
+): Promise<Record<string, unknown>> {
   try {
-    metadata = (await runtime.client.coordination.getBlobMetadata({
+    const runtime = await getShelbyRuntime();
+    const { accountAddress, blobName } = await parseBlobId(blobId);
+
+    const metadata = await runtime.client.coordination.getFullObjectMetadata({
       account: accountAddress,
       name: blobName,
-    })) as ShelbyBlobMetadataLike;
-  } catch (directError: unknown) {
-    const msg = directError instanceof Error ? directError.message : String(directError);
-    if (msg.includes('BigInt') || msg.includes('Cannot convert')) {
-      console.warn(
-        `[Verify] getBlobMetadata failed (SDK BigInt bug), falling back to indexer:`,
-        msg,
-      );
-      metadata = await fetchBlobMetadataViaIndexer(runtime, accountAddress, blobName);
-    } else {
-      throw directError;
+    });
+
+    if (metadata === undefined) {
+      return { onChain: 'not-found' };
     }
-  }
 
-  if (metadata === undefined) {
-    throw new ShelbyVerificationError(
-      `Blob metadata not found on-chain for ${blobId}. The blob may not have been fully registered.`,
+    return {
+      onChain: {
+        uid: metadata.uid?.toString(),
+        blobMerkleRoot: metadata.blobMerkleRoot instanceof Uint8Array
+          ? `0x${Array.from(metadata.blobMerkleRoot).map((b) => b.toString(16).padStart(2, '0')).join('')}`
+          : metadata.blobMerkleRoot,
+        size: metadata.size,
+        isWritten: metadata.isWritten,
+        expirationMicros: metadata.expirationMicros,
+        creationMicros: metadata.creationMicros,
+      },
+    };
+  } catch (cause: unknown) {
+    console.warn(
+      `[Verify] On-chain provenance lookup failed for ${blobId} (best-effort, ignoring):`,
+      cause instanceof Error ? cause.message : cause,
     );
+    return { onChain: 'unavailable' };
   }
-
-  const actualMerkleRoot = await extractMerkleRoot(metadata);
-  const normalizedExpected = await normalizeMerkleRoot(expectedMerkleRoot);
-  const normalizedActual = await normalizeMerkleRoot(actualMerkleRoot);
-  const checkedAt = Date.now();
-
-  if (normalizedExpected !== normalizedActual) {
-    return persistTamperEvidence(blobId, normalizedExpected, normalizedActual, checkedAt, metadata);
-  }
-
-  return {
-    checkedAt,
-    valid: true,
-    details: {
-      expectedMerkleRoot: normalizedExpected,
-      actualMerkleRoot: normalizedActual,
-      blobMetadata: metadata,
-    },
-  };
 }
 
-async function verifyLocal(
+async function verifyByBytes(
   blobId: string,
   expectedMerkleRoot: string,
 ): Promise<{ checkedAt: number; details: Record<string, unknown>; valid: boolean }> {
@@ -245,65 +150,66 @@ async function verifyLocal(
     : [encodedBlobName, blobName];
 
   let blobData: Buffer | undefined;
-  let blobPath: string | undefined;
+  let storage: 'local' | 'cloudinary' | 'rpc' | undefined;
 
+  // 1. Local disk (temporary buffer — often wiped on Render restarts)
   for (const name of candidates) {
     const tryPath = join(LOCAL_BLOBS_DIR, accountAddress, name);
     try {
       blobData = await readFile(tryPath);
-      blobPath = tryPath;
+      storage = 'local';
       break;
     } catch {
       // try next candidate
     }
   }
 
-  if (blobData === undefined) {
-    // Local file missing (e.g. Render ephemeral storage wiped it). Try
-    // Cloudinary backup, then Shelby RPC.
-    if (isCloudinaryAvailable()) {
-      const folder = getCloudinaryFolder();
-      const publicId = `${accountAddress}/${encodedBlobName}`;
-      const cloudinaryData = await downloadFromCloudinary(publicId, folder);
-      if (cloudinaryData !== null) {
-        blobData = cloudinaryData;
-        blobPath = join(LOCAL_BLOBS_DIR, accountAddress, encodedBlobName);
-        // Re-cache locally for fast subsequent reads
-        const { mkdir, writeFile } = await import('node:fs/promises');
-        await mkdir(join(LOCAL_BLOBS_DIR, accountAddress), { recursive: true });
-        await writeFile(blobPath, blobData);
-      }
+  // 2. Cloudinary backup (persistent)
+  if (blobData === undefined && isCloudinaryAvailable()) {
+    const folder = getCloudinaryFolder();
+    const publicId = `${accountAddress}/${encodedBlobName}`;
+    const cloudinaryData = await downloadFromCloudinary(publicId, folder);
+    if (cloudinaryData !== null) {
+      blobData = cloudinaryData;
+      storage = 'cloudinary';
+      // Re-cache locally for fast subsequent reads
+      const { mkdir, writeFile } = await import('node:fs/promises');
+      await mkdir(join(LOCAL_BLOBS_DIR, accountAddress), { recursive: true });
+      await writeFile(join(LOCAL_BLOBS_DIR, accountAddress, encodedBlobName), blobData);
     }
+  }
 
-    // Still missing — try Shelby RPC as last resort
-    if (blobData === undefined) {
-      try {
-        const { getShelbyRuntime } = await import('./client.js');
-        const runtime = await getShelbyRuntime();
-        const { AccountAddress } = await import('@aptos-labs/ts-sdk');
-        const shelbyBlob = await runtime.client.download({
-          account: AccountAddress.fromString(accountAddress),
-          blobName,
-        });
-        const chunks: Uint8Array[] = [];
-        const reader = shelbyBlob.readable.getReader();
-        let result = await reader.read();
-        while (!result.done) {
-          chunks.push(result.value);
-          result = await reader.read();
-        }
-        blobData = Buffer.concat(chunks);
-
-        // Cache locally
-        blobPath = join(LOCAL_BLOBS_DIR, accountAddress, encodedBlobName);
-        const { mkdir, writeFile } = await import('node:fs/promises');
-        await mkdir(join(LOCAL_BLOBS_DIR, accountAddress), { recursive: true });
-        await writeFile(blobPath, blobData);
-      } catch {
-        throw new ShelbyVerificationError(
-          `Blob not found on-chain or locally: ${blobId}`,
-        );
+  // 3. Shelby RPC (canonical storage)
+  if (blobData === undefined) {
+    try {
+      const runtime = await getShelbyRuntime();
+      const { AccountAddress } = await import('@aptos-labs/ts-sdk');
+      const shelbyBlob = await runtime.client.download({
+        account: AccountAddress.fromString(accountAddress),
+        blobName,
+      });
+      const chunks: Uint8Array[] = [];
+      const reader = (shelbyBlob as { readable?: ReadableStream<Uint8Array> }).readable?.getReader();
+      if (reader === undefined) {
+        throw new ShelbyVerificationError('Shelby download returned no readable stream.');
       }
+      let result = await reader.read();
+      while (!result.done) {
+        chunks.push(result.value);
+        result = await reader.read();
+      }
+      blobData = Buffer.concat(chunks);
+      storage = 'rpc';
+
+      // Cache locally
+      const { mkdir, writeFile } = await import('node:fs/promises');
+      await mkdir(join(LOCAL_BLOBS_DIR, accountAddress), { recursive: true });
+      await writeFile(join(LOCAL_BLOBS_DIR, accountAddress, encodedBlobName), blobData);
+    } catch {
+      throw new ShelbyVerificationError(
+        `Blob bytes not found for ${blobId} (checked local disk, Cloudinary, and Shelby RPC). ` +
+        `The blob may have been uploaded when the RPC was unreachable and never backed up.`,
+      );
     }
   }
 
@@ -314,9 +220,8 @@ async function verifyLocal(
 
   if (normalizedExpected !== normalizedActual) {
     return persistTamperEvidence(blobId, normalizedExpected, normalizedActual, checkedAt, {
-      name: blobName,
-      size: blobData.byteLength,
-      storage: 'local',
+      actualBytes: blobData.byteLength,
+      storage,
     });
   }
 
@@ -326,7 +231,8 @@ async function verifyLocal(
     details: {
       expectedMerkleRoot: normalizedExpected,
       actualMerkleRoot: normalizedActual,
-      storage: 'local',
+      storage,
+      ...(await fetchOnChainEvidence(blobId)),
     },
   };
 }
@@ -336,17 +242,11 @@ export async function verifyIntegrity(
   expectedMerkleRoot: string,
 ): Promise<{ checkedAt: number; details: Record<string, unknown>; valid: boolean }> {
   try {
-    // Try on-chain verification first
-    try {
-      return await verifyOnChain(blobId, expectedMerkleRoot);
-    } catch (onChainError: unknown) {
-      // If on-chain fails, try local blob verification
-      console.warn(
-        `[Verify] On-chain verification failed, trying local fallback:`,
-        onChainError instanceof Error ? onChainError.message : onChainError,
-      );
-      return await verifyLocal(blobId, expectedMerkleRoot);
-    }
+    // Byte-first verification: download the actual bytes (disk -> Cloudinary
+    // -> Shelby RPC) and compare SHA-256 against the stored root. This is the
+    // authoritative check — on-chain metadata carries the erasure root, not
+    // the raw file hash, so it can never validate bytes.
+    return await verifyByBytes(blobId, expectedMerkleRoot);
   } catch (cause: unknown) {
     if (cause instanceof ShelbyVerificationError) {
       throw cause;

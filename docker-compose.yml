@@ -19,7 +19,7 @@ services:
       SHELBY_API_KEY: ${SHELBY_API_KEY:-}
       SHELBY_SIGNER_PRIVATE_KEY: ${SHELBY_SIGNER_PRIVATE_KEY:-}
       SHELBY_NETWORK: ${SHELBY_NETWORK:-shelbynet}
-      SHELBY_RPC_URL: ${SHELBY_RPC_URL:-https://api.shelbynet.shelby.xyz/shelby}
+      SHELBY_RPC_URL: ${SHELBY_RPC_URL:-https://shelby.shelbynet.shelby.xyz/shelby}
       SHELBY_LOCATION: ${SHELBY_LOCATION:-shelbynet-1}
       # The dedicated `keeper` service below owns the auto-release sweep — keep
       # the API itself from also running it (only one runner at a time).

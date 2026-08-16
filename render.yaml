@@ -22,6 +22,8 @@ services:
         sync: false
       - key: SHELBY_RPC_URL
         sync: false
+      - key: SHELBY_INDEXER_URL
+        sync: false
       - key: GOOGLE_AI_API_KEY
         sync: false
       - key: APTOS_NODE_URL

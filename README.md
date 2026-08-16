@@ -201,8 +201,8 @@ verida-ai/
 | **Backend** | Node.js 22 · Express 5 · TypeScript · Zod · multer · helmet · morgan · ws (WebSocket) |
 | **Database** | PostgreSQL 16 · Drizzle ORM · postgres.js driver |
 | **Cache / Queues** | Redis 7 · ioredis · BullMQ · express-rate-limit + rate-limit-redis |
-| **Blockchain** | Aptos TS SDK `5.1.6` (pinned for Shelby compat) · Move smart contracts · Petra wallet |
-| **Storage** | `@shelby-protocol/sdk` — decentralized blob storage with merkle proofs |
+| **Blockchain** | Aptos TS SDK `^5.2.1` · Move smart contracts · Petra wallet |
+| **Storage** | `@shelby-protocol/sdk` `0.7.1` — decentralized blob storage with merkle proofs (v2 chunkset upload protocol) |
 | **AI** | `@google/generative-ai` (Gemini 2.5 Flash + embeddings) · Groq (Llama 3.1) · Anthropic (Claude Haiku) · OpenAI (embeddings fallback) |
 | **Testing** | Vitest · Supertest-style API tests |
 | **DevOps** | Docker / Docker Compose · Render (web + worker) · Vercel · ESLint + Prettier |
@@ -284,6 +284,7 @@ Base URL: `http://localhost:4000` (or your deployed API). All responses follow t
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/healthz` | Liveness + Shelby connectivity (ok / degraded) |
+| `GET` | `/health/storage` | Storage-layer health: Shelby RPC reachability + Cloudinary config |
 | `GET` | `/api/stats/live` | Platform totals (datasets, verified, accesses, bytes) |
 | `GET` | `/api/keeper/status` | Escrow keeper observability (last sweep, released/errors) |
 | `GET` | `/api/price/apt` | Live APT/USD price (Binance → Coinbase → CoinGecko, 60s cache) |
@@ -459,7 +460,8 @@ Signature wire format: `"0x" + 64-hex(pubKey) + 128-hex(signature)`.
 | `VITE_API_URL` | Frontend → API base URL | `http://localhost:4000` |
 | **Shelby** | | |
 | `SHELBY_API_KEY` | Shelby storage API key | — |
-| `SHELBY_RPC_URL` | Shelby RPC endpoint | `https://api.shelbynet.shelby.xyz/shelby` |
+| `SHELBY_RPC_URL` | Shelby RPC endpoint (passed to the SDK itself, so `putBlob`/`getBlob` hit it) | `https://shelby.shelbynet.shelby.xyz/shelby` |
+| `SHELBY_INDEXER_URL` | Shelby blob indexer (GraphQL); optional — defaults to the shelbynet indexer | — |
 | `SHELBY_NETWORK` | Shelby network | `shelbynet` |
 | `SHELBY_LOCATION` | Blob location hint | `shelbynet-1` |
 | `SHELBY_SIGNER_PRIVATE_KEY` | Signer for uploads **and** keeper `auto_release` txs (needs APT for gas) | — |

@@ -50,8 +50,8 @@ Modern AI training has a data credibility problem: no trust, no verified provena
 | **Backend** | Node.js 22, Express 5, TypeScript, Zod, multer, helmet, morgan, ws (WebSocket) |
 | **Database** | PostgreSQL 16, Drizzle ORM, postgres.js driver |
 | **Cache / Queues** | Redis 7, ioredis, BullMQ, express-rate-limit + rate-limit-redis |
-| **Blockchain** | Aptos TS SDK 5.1.6 (pinned for Shelby compat), Move smart contracts, Petra wallet |
-| **Storage** | `@shelby-protocol/sdk` — decentralized blob storage with merkle proofs |
+| **Blockchain** | Aptos TS SDK ^5.2.1, Move smart contracts, Petra wallet |
+| **Storage** | `@shelby-protocol/sdk` 0.7.1 — decentralized blob storage with merkle proofs (v2 chunkset upload protocol) |
 | **AI** | `@google/generative-ai` (Gemini 2.5 Flash + embeddings), Groq (Llama 3.1), Anthropic (Claude Haiku), OpenAI (embeddings fallback) |
 | **Testing** | Vitest, Supertest-style API tests |
 | **DevOps** | Docker / Docker Compose, Render (API + worker), Vercel (frontend), ESLint + Prettier |
@@ -163,7 +163,8 @@ Starts 5 services: API (`:4000`), keeper, Postgres (`:5432`), Redis (`:6379`), A
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `SHELBY_API_KEY` | Shelby storage API key | — |
-| `SHELBY_RPC_URL` | Shelby RPC endpoint | `https://api.shelbynet.shelby.xyz/shelby` |
+| `SHELBY_RPC_URL` | Shelby RPC endpoint (passed to the SDK itself, so `putBlob`/`getBlob` hit it) | `https://shelby.shelbynet.shelby.xyz/shelby` |
+| `SHELBY_INDEXER_URL` | Shelby blob indexer (GraphQL); optional — defaults to the shelbynet indexer | — |
 | `SHELBY_NETWORK` | Shelby network | `shelbynet` |
 | `SHELBY_LOCATION` | Blob location hint | `shelbynet-1` |
 | `SHELBY_SIGNER_PRIVATE_KEY` | Signer for uploads + keeper auto_release | — |
@@ -313,6 +314,7 @@ UPLOAD (0), VERSION_ADDED (1), VERIFIED (2), TAMPER_DETECTED (3), ACCESSED (4), 
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/healthz` | Liveness + Shelby connectivity (ok / degraded) |
+| `GET` | `/health/storage` | Storage-layer health: Shelby RPC reachability + Cloudinary config |
 | `GET` | `/api/stats/live` | Platform totals (datasets, verified, accesses, bytes) |
 | `GET` | `/api/keeper/status` | Escrow keeper observability |
 | `GET` | `/api/price/apt` | Live APT/USD price (60s cache) |

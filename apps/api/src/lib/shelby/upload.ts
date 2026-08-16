@@ -1,22 +1,23 @@
-// IMPLEMENTER NOTE: Uploads Shelby blobs with retryable on-chain registration, RPC confirmation, and temp-file cleanup.
+// IMPLEMENTER NOTE: Uploads Shelby blobs via the v2 chunkset protocol (register -> uid -> putBlobChunksets -> commitObject), verifies the blob is retrievable, and backs it up to Cloudinary.
 // BUILD.md TASK: STEP 4 — Shelby SDK Integration Layer
 // ARCHITECT CONTRACT: uploadDataset(filePath, metadata) plus upload progress callbacks and typed Shelby upload errors
-// SHELBY SDK METHODS: generateCommitments, ShelbyBlobClient.registerBlob, ShelbyNodeClient.rpc.putBlob, Aptos transaction wait
+// SHELBY SDK METHODS: generateCommitments, ShelbyBlobClient.registerBlob/registeredBlobUids, ShelbyNodeClient.rpc.putBlobChunksets, ShelbyNodeClient.coordination.commitObject, ShelbyNodeClient.download, Aptos transaction wait
 // DB TABLES: None directly; upload receipts are persisted by the upload job worker after this helper returns.
 // HANDOFF TO TESTER: Verify progress events, retry behavior, content hash validation, receipt shape, and temp-file deletion.
 
 import { createHash } from 'node:crypto';
-import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import {
-  ClayErasureCodingProvider,
-  DEFAULT_CHUNKSET_SIZE_BYTES,
-  expectedTotalChunksets,
+  createBlobKey,
+  createDefaultErasureCodingProvider,
   generateCommitments,
+  SHELBY_DEPLOYER,
+  ShelbyBlobClient,
 } from '@shelby-protocol/sdk/node';
-import { AccountAddress, MoveOption, MoveString, MoveVector } from '@aptos-labs/ts-sdk';
+import type { BlobCommitments } from '@shelby-protocol/sdk/node';
+import { AccountAddress, isUserTransactionResponse } from '@aptos-labs/ts-sdk';
 import type { ProvenanceReceipt } from '@verida/shared';
 
 import {
@@ -49,10 +50,6 @@ export interface ShelbyUploadOptions {
 
 const MAX_UPLOAD_RETRIES = 3;
 const BACKOFF_BASE_MS = 250;
-
-function encodeURIComponentKeepSlashes(str: string): string {
-  return encodeURIComponent(str).replace(/%2F/g, '/');
-}
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
@@ -228,6 +225,51 @@ async function storeBlobLocally(
   }
 }
 
+/**
+ * Downloads the blob back from the Shelby RPC and compares its SHA-256 to the
+ * raw file hash. This is the final gate of the v2 upload: a blob only becomes
+ * retrievable by name after `commit_object`, so a successful download proves
+ * the data actually landed on storage providers (and not just on-chain).
+ */
+async function verifyDownloadedBlob(
+  runtime: Awaited<ReturnType<typeof getShelbyRuntime>>,
+  accountAddress: string,
+  blobName: string,
+  expectedSha256: string,
+): Promise<void> {
+  const shelbyBlob = await runtime.client.download({
+    account: accountAddress,
+    blobName,
+  });
+
+  const readableSource = (shelbyBlob as { readable?: unknown }).readable
+    ?? (shelbyBlob as { stream?: unknown }).stream;
+
+  if (readableSource === undefined || typeof (readableSource as ReadableStream<Uint8Array>).getReader !== 'function') {
+    throw new ShelbyUploadError('Shelby download verification returned no readable stream.');
+  }
+
+  const reader = (readableSource as ReadableStream<Uint8Array>).getReader();
+  const chunks: Uint8Array[] = [];
+  let result = await reader.read();
+  while (!result.done) {
+    chunks.push(result.value);
+    result = await reader.read();
+  }
+
+  const downloadedBytes = Buffer.concat(chunks);
+  const downloadedHash = createHash('sha256').update(downloadedBytes).digest('hex');
+
+  if (downloadedHash !== expectedSha256) {
+    throw new ShelbyUploadError(
+      `Post-upload download verification failed: expected sha256 ${expectedSha256}, got ${downloadedHash} ` +
+      `(${downloadedBytes.byteLength} bytes downloaded).`,
+    );
+  }
+
+  console.log(`[Shelby] Download verification passed (${downloadedBytes.byteLength} bytes, sha256 ${downloadedHash}).`);
+}
+
 export async function uploadDataset(
   filePath: string,
   metadata: ShelbyUploadMetadata,
@@ -265,13 +307,24 @@ export async function uploadDataset(
       metadata.expirationMicros ??
       Math.floor((Date.now() + 1000 * 60 * 60 * 24 * 30) * 1000);
 
+    // The DB merkle root is the RAW file SHA-256, not the erasure-coded
+    // commitment root. Verification downloads the blob bytes and compares
+    // sha256(bytes) to this value, so it must be the raw hash for every
+    // upload (RPC and local fallback alike). The erasure root still goes
+    // on-chain via register_blob as the provenance proof.
+    const rawFileHash = createHash('sha256').update(blobData).digest('hex');
+
     let uploadSignerAddress: string;
     let writeBlobTransactionHash = '';
     let blobCommitments: ShelbyBlobCommitmentsLike | null = null;
     let shelbyAvailable = false;
     let runtime: Awaited<ReturnType<typeof getShelbyRuntime>> | null = null;
 
-    // Try to initialize Shelby runtime — if anything fails, fall back to local storage
+    // Try to initialize the Shelby runtime — if ANYTHING in init fails
+    // (missing API key, RPC unreachable, commitments fail), fall back to
+    // local + Cloudinary storage. The v2 upload itself, once started, is NOT
+    // allowed to silently fall back: a failure there throws and the job is
+    // retried, so the DB never records a blob the RPC cannot serve.
     try {
       runtime = await getShelbyRuntime();
       const uploadSigner = await getShelbyUploadSigner();
@@ -281,7 +334,7 @@ export async function uploadDataset(
       shelbyAvailable = await isShelbyRpcAvailable(rpcBaseUrl);
 
       const aptosClient = await getShelbyAptosClient();
-      const provider = await ClayErasureCodingProvider.create();
+      const provider = await createDefaultErasureCodingProvider();
       blobCommitments = (await generateCommitments(provider, blobData)) as ShelbyBlobCommitmentsLike;
 
       await emitProgress(options.onProgress, {
@@ -290,49 +343,6 @@ export async function uploadDataset(
         bytesTotal: fileSizeBytes,
         stage: 'encoding',
       });
-
-      // On-chain registration — only if Shelby RPC is reachable
-      if (shelbyAvailable) {
-        const shelbyLocation = process.env.SHELBY_LOCATION?.trim() ?? 'shelbynet-1';
-        const writeBlobRegistration = await runWithTransientRetries(async () => {
-          const transaction = await aptosClient.transaction.build.simple({
-            data: {
-              function: '0x85fdb9a176ab8ef1d9d9c1b60d60b3924f0800ac1de1cc2085fb0b8bb4988e6a::blob_metadata::register_blob',
-              functionArguments: [
-                blobName,
-                new MoveOption(new MoveString(shelbyLocation)),
-                new MoveOption<MoveString>(null),
-                expirationMicros,
-                MoveVector.U8(blobCommitments!.blob_merkle_root),
-                expectedTotalChunksets(fileSizeBytes, DEFAULT_CHUNKSET_SIZE_BYTES),
-                fileSizeBytes,
-                0,
-                0,
-                0,
-              ],
-            },
-            sender: uploadSigner.accountAddress,
-          });
-
-          return {
-            transaction: await aptosClient.signAndSubmitTransaction({
-              signer: uploadSigner,
-              transaction,
-            }),
-          };
-        });
-
-        writeBlobTransactionHash = writeBlobRegistration.transaction.hash;
-
-        await runWithTransientRetries(async () => {
-          await aptosClient.waitForTransaction({
-            transactionHash: writeBlobTransactionHash,
-            options: { timeoutSecs: 30 },
-          });
-        });
-
-        console.log(`[Shelby] On-chain registration complete: ${writeBlobTransactionHash}`);
-      }
     } catch (runtimeErr) {
       // Shelby/Aptos unavailable — fall back to local-only storage
       console.warn('[Shelby] Runtime init failed, using local storage:', runtimeErr instanceof Error ? runtimeErr.message : runtimeErr);
@@ -342,22 +352,9 @@ export async function uploadDataset(
       const pubHash = createHash('sha256').update(metadata.publisherAddress).digest('hex');
       uploadSignerAddress = `0x${pubHash.slice(0, 64)}`;
 
-      // Generate local commitments for merkle root
-      const fileHash = createHash('sha256').update(blobData).digest();
-      const fakeCommitments = { blob_merkle_root: fileHash.toString('hex') } as ShelbyBlobCommitmentsLike;
-      blobCommitments = fakeCommitments;
-    }
-
-    // If Shelby RPC is unavailable, override erasure-coded commitments with SHA-256
-    // so local verification (which computes sha256 of the raw file) can match
-    if (!shelbyAvailable) {
-      const fileHash = createHash('sha256').update(blobData).digest('hex');
-      blobCommitments = { blob_merkle_root: fileHash } as ShelbyBlobCommitmentsLike;
-      // Generate a deterministic address if not already set
-      if (!uploadSignerAddress!) {
-        const pubHash = createHash('sha256').update(metadata.publisherAddress).digest('hex');
-        uploadSignerAddress = `0x${pubHash.slice(0, 64)}`;
-      }
+      // Local mode stores the raw SHA-256 as the merkle root so byte
+      // verification (sha256 of the raw file) can match.
+      blobCommitments = { blob_merkle_root: rawFileHash } as ShelbyBlobCommitmentsLike;
     }
 
     await emitProgress(options.onProgress, {
@@ -367,42 +364,113 @@ export async function uploadDataset(
       stage: 'registering',
     });
 
-    // ── Step 5: Upload blob to storage ──────────────────────────────────
+    // ── Shelby v2 upload: register -> uid -> chunksets -> commit -> verify ──
+    let rpcUploadSucceeded = false;
     if (shelbyAvailable && runtime) {
-      // Use the SDK's putBlob method — handles multipart internally.
-      // This replaces the old manual multipart upload (POST /v1/multipart-uploads)
-      // which was retired in the Shelby v2 upload flow update.
-      let rpcUploadSucceeded = false;
+      const uploadSigner = await getShelbyUploadSigner();
+      const aptosClient = await getShelbyAptosClient();
+      const deployer = AccountAddress.fromString(SHELBY_DEPLOYER);
 
-      try {
-        await runWithTransientRetries(async () => {
-          await runtime.client.rpc.putBlob({
-            account: AccountAddress.fromString(uploadSignerAddress),
-            blobName,
-            blobData,
-          });
+      // 1. Register the blob on-chain. This creates a *pending* blob — it is
+      //    NOT retrievable yet. The on-chain UID is published only in the
+      //    BlobRegisteredEvent of this transaction.
+      const registration = await runWithTransientRetries(async () => {
+        return await runtime!.client.coordination.registerBlob({
+          account: uploadSigner,
+          blobName,
+          blobMerkleRoot: blobCommitments!.blob_merkle_root,
+          size: fileSizeBytes,
+          expirationMicros,
         });
-        rpcUploadSucceeded = true;
-        console.log(`[Shelby] Blob uploaded to RPC: ${blobName}`);
-      } catch (err) {
-        const message = err instanceof Error ? err.message.toLowerCase() : '';
-        // If the blob already exists on the RPC, treat as success
-        if (message.includes('already') || message.includes('conflict')) {
-          rpcUploadSucceeded = true;
-          console.log(`[Shelby] Blob already exists on RPC: ${blobName}`);
-        } else {
-          console.warn('[Shelby] RPC putBlob failed, falling back to local storage:', err instanceof Error ? err.message : err);
-        }
+      });
+      writeBlobTransactionHash = registration.transaction.hash;
+
+      const committedRegistration = await runWithTransientRetries(async () => {
+        return await aptosClient.waitForTransaction({
+          transactionHash: writeBlobTransactionHash,
+          options: { timeoutSecs: 60 },
+        });
+      });
+
+      if (!isUserTransactionResponse(committedRegistration)) {
+        throw new ShelbyUploadError(
+          `Registration tx ${writeBlobTransactionHash} did not commit as a user transaction.`,
+        );
       }
 
-      if (!rpcUploadSucceeded) {
-        await storeBlobLocally(uploadSignerAddress, blobName, blobData);
-        console.warn(`[Shelby] RPC upload failed — stored blob locally: ${LOCAL_BLOBS_DIR}/${uploadSignerAddress}/${blobName}`);
+      // 2. Extract the UID assigned to this blob.
+      const registeredBlobs = ShelbyBlobClient.registeredBlobUids(
+        committedRegistration.events,
+        deployer,
+      );
+      const expectedObjectName = createBlobKey({
+        account: uploadSignerAddress,
+        blobName,
+      });
+      const registrationMatch = registeredBlobs.find(
+        (entry) => entry.objectName === expectedObjectName,
+      ) ?? registeredBlobs[0];
+
+      if (registrationMatch === undefined) {
+        throw new ShelbyUploadError(
+          `No BlobRegisteredEvent found in registration tx ${writeBlobTransactionHash}. ` +
+          `The blob may already exist (overwrite is not allowed).`,
+        );
       }
-    } else {
-      // Dev fallback: store locally
+      const blobUid = registrationMatch.uid;
+
+      console.log(`[Shelby] On-chain registration complete: ${writeBlobTransactionHash} (uid ${blobUid})`);
+
+      // 3. Upload the blob data via the v2 chunkset API. Storage providers
+      //    ack each chunkset with an inclusion-proof signature; those acks are
+      //    required by commit_object, so commit can only succeed if the data
+      //    actually landed.
+      const uploadResult = await runWithTransientRetries(async () => {
+        return await runtime!.client.rpc.putBlobChunksets({
+          account: uploadSigner,
+          uid: blobUid,
+          blobData,
+          commitments: blobCommitments as unknown as BlobCommitments,
+        });
+      });
+
+      // 4. Commit the blob on-chain so it becomes retrievable by name.
+      const commit = await runWithTransientRetries(async () => {
+        return await runtime!.client.coordination.commitObject({
+          account: uploadSigner,
+          uid: blobUid,
+          blobName,
+          overwrite: false,
+          storageProviderAcks: uploadResult.spAcks,
+        });
+      });
+      writeBlobTransactionHash = commit.transaction.hash;
+
+      await runWithTransientRetries(async () => {
+        await aptosClient.waitForTransaction({
+          transactionHash: writeBlobTransactionHash,
+          options: { timeoutSecs: 60 },
+        });
+      });
+
+      // 5. Verify retrievability: download the committed blob and compare its
+      //    SHA-256 against the raw file hash. Only after this passes do we
+      //    report the upload as stored on Shelby.
+      await runWithTransientRetries(async () => {
+        await verifyDownloadedBlob(runtime!, uploadSignerAddress, blobName, rawFileHash);
+      });
+
+      rpcUploadSucceeded = true;
+      console.log(`[Shelby] v2 upload complete: ${writeBlobTransactionHash}`);
+    }
+
+    if (!rpcUploadSucceeded) {
       await storeBlobLocally(uploadSignerAddress, blobName, blobData);
-      console.warn(`[Shelby] RPC unavailable — stored blob locally: ${LOCAL_BLOBS_DIR}/${uploadSignerAddress}/${blobName}`);
+      console.warn(
+        shelbyAvailable
+          ? `[Shelby] RPC upload failed — stored blob locally: ${LOCAL_BLOBS_DIR}/${uploadSignerAddress}/${blobName}`
+          : `[Shelby] RPC unavailable — stored blob locally: ${LOCAL_BLOBS_DIR}/${uploadSignerAddress}/${blobName}`,
+      );
     }
 
     await emitProgress(options.onProgress, {
@@ -417,16 +485,12 @@ export async function uploadDataset(
     // Best-effort metadata refresh — skip in local mode
     if (runtime) {
       try {
-        const blobMetadata = (await runtime.client.coordination.getBlobMetadata({
-          account: uploadSignerAddress as `0x${string}`,
+        const blobMetadata = await runtime.client.coordination.getFullObjectMetadata({
+          account: uploadSignerAddress,
           name: blobName,
-        })) as {
-          expirationMicros?: number;
-          isWritten?: boolean;
-          size?: number;
-        };
+        });
 
-        if (typeof blobMetadata.expirationMicros === 'number') {
+        if (typeof blobMetadata?.expirationMicros === 'number') {
           expiresAtMicros = blobMetadata.expirationMicros;
         }
       } catch {
@@ -435,14 +499,15 @@ export async function uploadDataset(
     }
 
     const blobId = await buildBlobId(uploadSignerAddress, blobName);
-    const merkleRoot = await normalizeMerkleRoot(blobCommitments!.blob_merkle_root);
+    const merkleRoot = await normalizeMerkleRoot(rawFileHash);
     const receipt: ProvenanceReceipt = {
       blobId,
       merkleRoot,
       uploadedAt: Date.now(),
       uploaderAddress: uploadSignerAddress,
-      // Only ever a REAL Aptos transaction hash. Local/demo uploads (Shelby
-      // RPC or Aptos unavailable) get NULL — never a fabricated 'local-*' hash.
+      // Only ever a REAL Aptos transaction hash (the commit, or the
+      // registration for failed commits). Local/demo uploads (Shelby RPC or
+      // Aptos unavailable) get NULL — never a fabricated 'local-*' hash.
       txHash: writeBlobTransactionHash || null,
       size: fileSizeBytes,
       chunkCount: blobCommitments ? await countChunkCommitments(blobCommitments) : 1,
