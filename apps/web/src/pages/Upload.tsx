@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { DatasetTag, AccessType } from '@verida/shared';
 import { Button } from '../components/ui/Button';
@@ -13,6 +13,155 @@ import { useWalletContext } from '../context/WalletContext';
 import './Upload.css';
 
 const ALL_TAGS = Object.values(DatasetTag);
+
+// Extension -> modality tags (best guess from the file type alone).
+const EXTENSION_TAGS: Record<string, string[]> = {
+  '.csv': ['tabular'],
+  '.tsv': ['tabular'],
+  '.xlsx': ['tabular'],
+  '.xls': ['tabular'],
+  '.parquet': ['tabular'],
+  '.arrow': ['tabular'],
+  '.json': ['nlp'],
+  '.jsonl': ['nlp'],
+  '.ndjson': ['nlp'],
+  '.txt': ['nlp'],
+  '.md': ['nlp'],
+  '.xml': ['nlp'],
+  '.jpg': ['vision'],
+  '.jpeg': ['vision'],
+  '.png': ['vision'],
+  '.webp': ['vision'],
+  '.gif': ['vision'],
+  '.bmp': ['vision'],
+  '.tiff': ['vision'],
+  '.wav': ['audio'],
+  '.mp3': ['audio'],
+  '.flac': ['audio'],
+  '.ogg': ['audio'],
+  '.m4a': ['audio'],
+  '.aac': ['audio'],
+  '.mp4': ['vision'],
+  '.mov': ['vision'],
+  '.avi': ['vision'],
+  '.webm': ['vision'],
+  '.mkv': ['vision'],
+  '.pdf': ['education'],
+  '.doc': ['nlp'],
+  '.docx': ['nlp'],
+  '.ppt': ['education'],
+  '.pptx': ['education'],
+};
+
+// Filename keywords -> tags. Matches run against the lowercased filename, so
+// "Exponential and Logarithmic Functions.pdf" predicts education + mathematics.
+const FILENAME_KEYWORD_TAGS: Array<{ pattern: RegExp; tags: string[] }> = [
+  {
+    pattern: /math|calculus|algebra|geometry|logarithm|exponential|trigonom|equation|arithmetic|statistic|probab|function/i,
+    tags: ['education', 'mathematics'],
+  },
+  {
+    pattern: /exam|test|quiz|homework|assignment|worksheet|textbook|lesson|curriculum|grade|classroom/i,
+    tags: ['education'],
+  },
+  {
+    pattern: /medical|clinical|patient|health|disease|radiology|\bmri\b|xray|x-ray|cancer|drug|genome|genomic|biomedical/i,
+    tags: ['medical'],
+  },
+  {
+    pattern: /image|photo|pictur|object detection|segmentation|\bface\b|vision|ocr/i,
+    tags: ['vision'],
+  },
+  {
+    pattern: /speech|voice|audio|music|speaker|asr|tts|sound/i,
+    tags: ['audio'],
+  },
+  { pattern: /video|action|motion|frame/i, tags: ['vision', 'video'] },
+  {
+    pattern: /finance|stock|trading|market|crypto|bank|economic|price|forecast|fintech|portfolio/i,
+    tags: ['finance'],
+  },
+  {
+    pattern: /climate|weather|temperature|rainfall|ocean|environmental|emission|carbon|hydrolog/i,
+    tags: ['climate'],
+  },
+  { pattern: /energy|solar|wind|power|grid|battery|electric/i, tags: ['energy'] },
+  {
+    pattern: /legal|law|contract|court|regulation|compliance|statute|litigation/i,
+    tags: ['legal'],
+  },
+  {
+    pattern: /code|programming|source|github|\bbug\b|repository|algorithm|software|api|developer/i,
+    tags: ['code'],
+  },
+  { pattern: /game|gaming|player|esports|chess/i, tags: ['gaming'] },
+  {
+    pattern: /robot|robotics|manipulation|navigation|autonomous|drone/i,
+    tags: ['robotics'],
+  },
+  {
+    pattern: /satellite|geo|gps|\bmap\b|spatial|remote sensing|gis/i,
+    tags: ['geospatial'],
+  },
+  { pattern: /synthetic|generated|gan|diffusion|augmented/i, tags: ['synthetic'] },
+  {
+    pattern: /time.?series|temporal|sensor|iot|hourly|daily|timestamp|trend/i,
+    tags: ['time_series'],
+  },
+  {
+    pattern: /government|census|public policy|election|municipal|federal/i,
+    tags: ['government'],
+  },
+  { pattern: /web|crawl|internet|social|twitter|reddit|forum|browser/i, tags: ['web'] },
+  {
+    pattern: /physics|chemistry|biology|astronomy|genetics|neuroscien|quantum|molecular|cells/i,
+    tags: ['science'],
+  },
+  {
+    pattern: /language|translation|nlp|text|sentence|corpus|sentiment|dialogue|qa\b/i,
+    tags: ['nlp'],
+  },
+  { pattern: /dataset|table|record|tabular|spreadsheet|survey|sample/i, tags: ['tabular'] },
+];
+
+// Lowercase, strip invalid characters, collapse whitespace into single underscores.
+function normalizeTag(raw: string): string {
+  return raw
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9_ -]+/g, '')
+    .replace(/[\s]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 50);
+}
+
+// Predict tags from a chosen file using its extension + filename keywords.
+function predictTagsFromFile(file: File): string[] {
+  const name = file.name.toLowerCase();
+  const predicted = new Set<string>();
+
+  for (const [ext, tags] of Object.entries(EXTENSION_TAGS)) {
+    if (name.endsWith(ext)) {
+      tags.forEach((t) => predicted.add(t));
+      break;
+    }
+  }
+
+  for (const { pattern, tags } of FILENAME_KEYWORD_TAGS) {
+    if (pattern.test(name)) {
+      tags.forEach((t) => predicted.add(t));
+    }
+  }
+
+  // Prefer known marketplace tags first so the filters stay useful.
+  const known = new Set<string>(ALL_TAGS);
+  const ordered = Array.from(predicted).sort(
+    (a, b) => Number(known.has(b)) - Number(known.has(a)),
+  );
+  return ordered.slice(0, 4);
+}
+
 const LICENSE_OPTIONS = [
   'MIT',
   'Apache 2.0',
@@ -156,7 +305,7 @@ export default function Upload() {
   const [dragOver, setDragOver] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [tags, setTags] = useState<DatasetTag[]>([]);
+  const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
   const [license, setLicense] = useState('CC BY 4.0');
   const [accessType, setAccessType] = useState<AccessType>(AccessType.FREE);
@@ -227,12 +376,19 @@ export default function Upload() {
     e.stopPropagation();
     setDragOver(false);
     const f = e.dataTransfer.files?.[0];
-    if (f) setFile(f);
+    if (f) {
+      setFile(f);
+      // Auto-tag the file from its name + type; user can edit freely afterwards.
+      setTags(predictTagsFromFile(f));
+    }
   }, []);
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
-    if (f) setFile(f);
+    if (f) {
+      setFile(f);
+      setTags(predictTagsFromFile(f));
+    }
   }, []);
 
   const handleRemoveFile = useCallback(() => {
@@ -241,49 +397,32 @@ export default function Upload() {
     if (fileInputRef.current) fileInputRef.current.value = '';
   }, []);
 
+  // Add any tag the user typed — known marketplace tags or a custom one.
+  const addTag = useCallback(
+    (value: string) => {
+      const normalized = normalizeTag(value);
+      if (!normalized || tags.includes(normalized) || tags.length >= 10) return;
+      setTags((prev) => [...prev, normalized]);
+      setTagInput('');
+    },
+    [tags],
+  );
+
   const handleTagKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
       if (e.key === ',') {
         e.preventDefault();
-        const input = tagInput.trim().replace(/,$/, '').trim();
-        if (!input) return;
-        const match = ALL_TAGS.find(
-          (t) => t.replace(/_/g, ' ').toLowerCase() === input.toLowerCase(),
-        );
-        if (match && !tags.includes(match) && tags.length < 10) {
-          setTags((prev) => [...prev, match]);
-          setTagInput('');
-        }
+        addTag(tagInput);
         return;
       }
       if (e.key !== 'Enter') return;
       e.preventDefault();
-      const input = tagInput.trim();
-      if (!input) return;
-      // Try exact match first
-      const match = ALL_TAGS.find(
-        (t) => t.replace(/_/g, ' ').toLowerCase() === input.toLowerCase(),
-      );
-      if (match && !tags.includes(match) && tags.length < 10) {
-        setTags((prev) => [...prev, match]);
-        setTagInput('');
-        return;
-      }
-      // If no exact match, add the first suggestion
-      const suggestions = ALL_TAGS.filter(
-        (t) =>
-          t.replace(/_/g, ' ').toLowerCase().startsWith(input.toLowerCase()) &&
-          !tags.includes(t),
-      );
-      if (suggestions.length > 0 && tags.length < 10 && suggestions[0] !== undefined) {
-        setTags((prev) => [...prev, suggestions[0]!]);
-        setTagInput('');
-      }
+      addTag(tagInput);
     },
-    [tagInput, tags],
+    [addTag, tagInput],
   );
 
-  const removeTag = useCallback((tag: DatasetTag) => {
+  const removeTag = useCallback((tag: string) => {
     setTags((prev) => prev.filter((t) => t !== tag));
   }, []);
 
@@ -476,13 +615,32 @@ export default function Upload() {
     );
   };
 
-  const tagSuggestions = tagInput.trim()
-    ? ALL_TAGS.filter(
-        (t) =>
-          t.replace(/_/g, ' ').toLowerCase().startsWith(tagInput.trim().toLowerCase()) &&
-          !tags.includes(t),
-      ).slice(0, 5)
-    : [];
+  const tagSuggestions = useMemo(() => {
+    const input = tagInput.trim();
+    if (!input) return [];
+    const matches: Array<{ value: string; label: string; isNew: boolean }> = ALL_TAGS.filter(
+      (t) =>
+        t.replace(/_/g, ' ').toLowerCase().startsWith(input.toLowerCase()) &&
+        !tags.includes(t),
+    )
+      .slice(0, 4)
+      .map((t) => ({ value: t, label: t.replace(/_/g, ' '), isNew: false }));
+    // Typed text that isn't a known tag becomes a "create" suggestion, so
+    // users are never limited to the hardcoded tag list.
+    const normalized = normalizeTag(input);
+    if (
+      normalized &&
+      !tags.includes(normalized) &&
+      !matches.some((m) => m.value === normalized)
+    ) {
+      matches.push({
+        value: normalized,
+        label: `Add “${normalized.replace(/_/g, ' ')}”`,
+        isNew: true,
+      });
+    }
+    return matches;
+  }, [tagInput, tags]);
 
   return (
     <div className="upload-page">
@@ -609,16 +767,13 @@ export default function Upload() {
                     />
                     {tagSuggestions.length > 0 && (
                       <div className="tag-suggestions">
-                        {tagSuggestions.map((t) => (
+                        {tagSuggestions.map((s) => (
                           <button
-                            key={t}
-                            className="tag-suggestion"
-                            onClick={() => {
-                              setTags((prev) => [...prev, t]);
-                              setTagInput('');
-                            }}
+                            key={s.value}
+                            className={`tag-suggestion${s.isNew ? ' tag-suggestion-new' : ''}`}
+                            onClick={() => addTag(s.value)}
                           >
-                            {t.replace(/_/g, ' ')}
+                            {s.label}
                           </button>
                         ))}
                       </div>
@@ -631,7 +786,15 @@ export default function Upload() {
                       </TagPill>
                     ))}
                   </div>
-                  <span className="input-helper">{tags.length}/10 tags</span>
+                  <span className="input-helper">
+                    {tags.length}/10 tags
+                    {file && tags.length === 0 && ' · no tags yet'}
+                  </span>
+                  {file && tags.length > 0 && (
+                    <span className="input-helper tag-predict-hint">
+                      Predicted from “{file.name}” — click a tag to remove it or type your own.
+                    </span>
+                  )}
                 </div>
                 <div className="upload-field">
                   <label className="input-label">License</label>

@@ -8,7 +8,7 @@
 import { EventEmitter } from 'node:events';
 
 import { Queue, type ConnectionOptions } from 'bullmq';
-import type { AccessType, Dataset, DatasetTag } from '@verida/shared';
+import type { AccessType, Dataset } from '@verida/shared';
 
 export const UploadQueueName = 'verida-upload-jobs' as const;
 
@@ -31,7 +31,7 @@ export interface UploadDatasetMetadata {
   parentDatasetId?: number;
   pricePerAccess?: number | null;
   sizeBytes?: number;
-  tags: DatasetTag[];
+  tags: string[];
   version?: number;
 }
 

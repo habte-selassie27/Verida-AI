@@ -1,7 +1,7 @@
 import { db } from '../lib/db/index.js';
 import { datasets, publishers } from '../lib/db/schema.js';
 import { sql } from 'drizzle-orm';
-import type { AccessType, DatasetModality, DatasetTag, SchemaProfile } from '@verida/shared';
+import type { AccessType, DatasetModality, SchemaProfile } from '@verida/shared';
 import { seedCommunityPosts } from '../lib/community/seed.js';
 
 const ADMIN_WALLET = process.env.VITE_MARKETPLACE_CONTRACT_ADDRESS ?? '0x141a8b5da194f039af93bdb7df81824a506fe73cade01138d2309aa7d497fddd';
@@ -259,7 +259,7 @@ async function seed() {
       shelbyBlobId,
       name: ds.name,
       description: ds.description,
-      tags: ds.tags as DatasetTag[],
+      tags: ds.tags as string[],
       sizeBytes: ds.size_bytes,
       version: 1,
       publisherAddress: publisher.address,

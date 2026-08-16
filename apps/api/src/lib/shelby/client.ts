@@ -7,7 +7,7 @@
 
 import { Account, AccountAddress, Aptos, AptosConfig, Ed25519Account, Ed25519PrivateKey, Network } from '@aptos-labs/ts-sdk';
 import { NetworkToDefaultLocationHint, NetworkToShelbyBlobIndexerBaseUrl, NetworkToShelbyRPCBaseUrl, ShelbyNodeClient } from '@shelby-protocol/sdk/node';
-import type { AccessType, DatasetTag, ProvenanceReceipt } from '@verida/shared';
+import type { AccessType, ProvenanceReceipt } from '@verida/shared';
 
 import type { ProvenanceEventType } from '../db/schema.js';
 
@@ -28,7 +28,7 @@ export interface ShelbyUploadMetadata {
   blobName?: string;
   name?: string;
   description?: string;
-  tags?: DatasetTag[];
+  tags?: string[];
   accessType?: AccessType;
   license?: string;
   version?: number;

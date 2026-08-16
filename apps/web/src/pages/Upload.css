@@ -423,6 +423,15 @@
   color: var(--text-primary);
 }
 
+.tag-suggestion-new {
+  color: var(--accent, #ff007f);
+  font-style: italic;
+}
+
+.tag-predict-hint {
+  margin-top: 2px;
+}
+
 /* Access Cards */
 .access-type-group {
   display: flex;

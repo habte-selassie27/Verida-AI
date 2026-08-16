@@ -16,7 +16,7 @@ import { and, asc, count, desc, eq, sql } from 'drizzle-orm';
 import { Router, type Request, type Response } from 'express';
 import asyncHandler from 'express-async-handler';
 import multer from 'multer';
-import { AccessType, DatasetTag, type DatasetModality } from '@verida/shared';
+import { AccessType, type DatasetModality } from '@verida/shared';
 import { z } from 'zod';
 
 import { db, accessSessions, datasets, datasetVersions, provenanceChain, publishers } from '../lib/db/index.js';
@@ -110,7 +110,7 @@ interface UploadBodyInput {
   parentDatasetId: number | undefined;
   pricePerAccess: number | null | undefined;
   publisherAddress: string;
-  tags: DatasetTag[];
+  tags: string[];
   version: number | undefined;
 }
 
@@ -156,7 +156,7 @@ const listQuerySchema = z.object({
   publisher: z.string().trim().min(1).optional(),
   search: z.string().trim().min(1).optional(),
   sort: z.string().trim().min(1).optional(),
-  tag: z.nativeEnum(DatasetTag).optional(),
+  tag: z.string().trim().min(1).optional(),
   tags: z.string().trim().optional(),
 });
 
@@ -172,7 +172,7 @@ const uploadBodySchema = z
     parentDatasetId: z.coerce.number().int().positive().optional(),
     pricePerAccess: z.coerce.number().int().nonnegative().nullable().optional(),
     publisherAddress: z.string().trim().min(1),
-    tags: z.array(z.nativeEnum(DatasetTag)).min(1),
+    tags: z.array(z.string().trim().min(1).max(50)).min(1).max(10),
     version: z.coerce.number().int().positive().optional(),
   })
   .superRefine((value, context) => {
@@ -248,27 +248,27 @@ function normalizeStringField(input: unknown): string | undefined {
   return normalized.length > 0 ? normalized : undefined;
 }
 
-function parseTagsInput(input: unknown): DatasetTag[] {
-  const allowedTags = new Set<string>(Object.values(DatasetTag));
+// Normalize a tag: lowercase, strip invalid characters, collapse whitespace
+// into underscores so free-form tags stay consistent with the curated ones.
+function normalizeTagValue(input: string): string {
+  return input
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9_ -]+/g, '')
+    .replace(/[\s]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 50);
+}
 
+function parseTagsInput(input: unknown): string[] {
   if (Array.isArray(input)) {
     const tags = input
-      .map((value) => (typeof value === 'string' ? value.trim() : ''))
+      .map((value) => (typeof value === 'string' ? normalizeTagValue(value) : ''))
       .filter((value) => value.length > 0);
 
-    const invalidTag = tags.find((tag) => !allowedTags.has(tag));
-    if (invalidTag !== undefined) {
-      throw new ApiRouteError({
-        code: 'INVALID_TAG',
-        details: {
-          tag: invalidTag,
-        },
-        message: `Unsupported dataset tag: ${invalidTag}.`,
-        statusCode: 400,
-      });
-    }
-
-    return tags as DatasetTag[];
+    // Dedupe and cap at 10 tags.
+    return Array.from(new Set(tags)).slice(0, 10);
   }
 
   if (typeof input === 'string') {

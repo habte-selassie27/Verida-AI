@@ -2,7 +2,6 @@ import type {
   APIResponse,
   AccessSession,
   Dataset,
-  DatasetTag,
   DatasetVersion,
   Publisher,
 } from '@verida/shared';
@@ -134,7 +133,7 @@ export interface AccessSessionResponse {
 export async function listDatasets(params?: {
   page?: number;
   limit?: number;
-  tag?: DatasetTag;
+  tag?: string;
   tags?: string[];
   publisher?: string;
   license?: string;

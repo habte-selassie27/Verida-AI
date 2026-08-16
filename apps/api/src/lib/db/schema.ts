@@ -23,7 +23,6 @@ import {
 import type {
   AccessSessionStatus,
   AccessType,
-  DatasetTag,
   DatasetModality,
   DescribeStatus,
   ProvenanceReceipt,
@@ -86,7 +85,7 @@ export const datasets = pgTable(
     shelbyBlobId: text('shelby_blob_id').notNull(),
     name: text('name').notNull(),
     description: text('description').notNull(),
-    tags: text('tags').array().notNull().$type<DatasetTag[]>(),
+    tags: text('tags').array().notNull().$type<string[]>(),
     sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
     version: integer('version').notNull(),
     publisherAddress: text('publisher_address')

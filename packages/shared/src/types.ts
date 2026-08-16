@@ -137,7 +137,8 @@ export interface Dataset {
   shelby_blob_id: string;
   name: string;
   description: string;
-  tags: DatasetTag[];
+  // Free-form tags: curated marketplace tags AND user-typed custom tags.
+  tags: string[];
   size_bytes: number;
   version: number;
   publisher_address: string;
