@@ -127,7 +127,7 @@ export function createVerifyWorker(): Worker<VerifyIntegrityJobData, VerifyWorke
         await db
           .update(datasets)
           .set({
-            verified: false,
+            verified: null,
             tampered: false,
           })
           .where(eq(datasets.id, job.data.datasetId));
