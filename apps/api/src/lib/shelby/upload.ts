@@ -476,6 +476,24 @@ export async function uploadDataset(
 
       rpcUploadSucceeded = true;
       console.log(`[Shelby] v2 upload complete: ${writeBlobTransactionHash}`);
+
+      // Persistent backup: mirror the blob to Cloudinary so it survives even
+      // if the Shelby RPC becomes unreachable later. Best-effort — a backup
+      // failure must not fail the upload; Shelby is the canonical store.
+      if (isCloudinaryAvailable()) {
+        try {
+          const publicId = `${uploadSignerAddress}/${blobName.replaceAll('/', '__')}`;
+          const url = await uploadToCloudinary(publicId, blobData, getCloudinaryFolder());
+          if (url) {
+            console.log(`[Cloudinary] Blob persisted: ${url}`);
+          }
+        } catch (backupErr) {
+          console.warn(
+            '[Cloudinary] Backup failed (best-effort, upload unaffected):',
+            backupErr instanceof Error ? backupErr.message : backupErr,
+          );
+        }
+      }
     }
 
     if (!rpcUploadSucceeded) {
