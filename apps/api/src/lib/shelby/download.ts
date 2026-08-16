@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 
 import { getShelbyRuntime, parseBlobId, ShelbyStreamError } from './client.js';
+import { isCloudinaryAvailable, downloadFromCloudinary, getCloudinaryFolder } from './cloudinary.js';
 
 // Mirrors LOCAL_BLOBS_DIR in upload.ts/verify.ts. When the shelbynet RPC is
 // unreachable at upload time, uploadDataset stores the file on this instance's
@@ -85,6 +86,18 @@ async function readLocalBlobBytes(blobId: string): Promise<Buffer | null> {
     const blobPath = join(LOCAL_BLOBS_DIR, accountAddress, blobName.replaceAll('/', '__'));
     return await readFile(blobPath);
   } catch {
+    // Local file missing — try Cloudinary backup
+    try {
+      const { accountAddress, blobName } = await parseBlobId(blobId);
+      if (isCloudinaryAvailable()) {
+        const folder = getCloudinaryFolder();
+        const publicId = `${accountAddress}/${blobName.replaceAll('/', '__')}`;
+        const data = await downloadFromCloudinary(publicId, folder);
+        if (data !== null) return data;
+      }
+    } catch {
+      // fall through
+    }
     return null;
   }
 }

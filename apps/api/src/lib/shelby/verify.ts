@@ -18,6 +18,7 @@ import {
   parseBlobId,
   ShelbyVerificationError,
 } from './client.js';
+import { isCloudinaryAvailable, downloadFromCloudinary, getCloudinaryFolder } from './cloudinary.js';
 
 const LOCAL_BLOBS_DIR = join(process.cwd(), '.shelby-blobs');
 
@@ -258,34 +259,51 @@ async function verifyLocal(
   }
 
   if (blobData === undefined) {
-    // Local file missing (e.g. Render ephemeral storage wiped it). Try to
-    // re-download from the Shelby RPC so verification can still succeed.
-    try {
-      const { getShelbyRuntime } = await import('./client.js');
-      const runtime = await getShelbyRuntime();
-      const { AccountAddress } = await import('@aptos-labs/ts-sdk');
-      const shelbyBlob = await runtime.client.download({
-        account: AccountAddress.fromString(accountAddress),
-        blobName,
-      });
-      const chunks: Uint8Array[] = [];
-      const reader = shelbyBlob.readable.getReader();
-      let result = await reader.read();
-      while (!result.done) {
-        chunks.push(result.value);
-        result = await reader.read();
+    // Local file missing (e.g. Render ephemeral storage wiped it). Try
+    // Cloudinary backup, then Shelby RPC.
+    if (isCloudinaryAvailable()) {
+      const folder = getCloudinaryFolder();
+      const publicId = `${accountAddress}/${encodedBlobName}`;
+      const cloudinaryData = await downloadFromCloudinary(publicId, folder);
+      if (cloudinaryData !== null) {
+        blobData = cloudinaryData;
+        blobPath = join(LOCAL_BLOBS_DIR, accountAddress, encodedBlobName);
+        // Re-cache locally for fast subsequent reads
+        const { mkdir, writeFile } = await import('node:fs/promises');
+        await mkdir(join(LOCAL_BLOBS_DIR, accountAddress), { recursive: true });
+        await writeFile(blobPath, blobData);
       }
-      blobData = Buffer.concat(chunks);
+    }
 
-      // Cache locally using the encoded filename (matches storeBlobLocally)
-      blobPath = join(LOCAL_BLOBS_DIR, accountAddress, encodedBlobName);
-      const { mkdir, writeFile } = await import('node:fs/promises');
-      await mkdir(join(LOCAL_BLOBS_DIR, accountAddress), { recursive: true });
-      await writeFile(blobPath, blobData);
-    } catch {
-      throw new ShelbyVerificationError(
-        `Blob not found on-chain or locally: ${blobId}`,
-      );
+    // Still missing — try Shelby RPC as last resort
+    if (blobData === undefined) {
+      try {
+        const { getShelbyRuntime } = await import('./client.js');
+        const runtime = await getShelbyRuntime();
+        const { AccountAddress } = await import('@aptos-labs/ts-sdk');
+        const shelbyBlob = await runtime.client.download({
+          account: AccountAddress.fromString(accountAddress),
+          blobName,
+        });
+        const chunks: Uint8Array[] = [];
+        const reader = shelbyBlob.readable.getReader();
+        let result = await reader.read();
+        while (!result.done) {
+          chunks.push(result.value);
+          result = await reader.read();
+        }
+        blobData = Buffer.concat(chunks);
+
+        // Cache locally
+        blobPath = join(LOCAL_BLOBS_DIR, accountAddress, encodedBlobName);
+        const { mkdir, writeFile } = await import('node:fs/promises');
+        await mkdir(join(LOCAL_BLOBS_DIR, accountAddress), { recursive: true });
+        await writeFile(blobPath, blobData);
+      } catch {
+        throw new ShelbyVerificationError(
+          `Blob not found on-chain or locally: ${blobId}`,
+        );
+      }
     }
   }
 

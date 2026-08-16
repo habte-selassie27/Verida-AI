@@ -31,6 +31,7 @@ import {
   type ShelbyUploadProgress,
   type ShelbyUploadResult,
 } from './client.js';
+import { isCloudinaryAvailable, uploadToCloudinary, getCloudinaryFolder } from './cloudinary.js';
 
 export type { ShelbyUploadMetadata, ShelbyUploadProgress, ShelbyUploadResult } from './client.js';
 
@@ -215,6 +216,16 @@ async function storeBlobLocally(
   await fs.mkdir(destDir, { recursive: true });
   const destPath = path.join(destDir, blobName.replaceAll('/', '__'));
   await fs.writeFile(destPath, blobData);
+
+  // Also persist to Cloudinary so blobs survive Render ephemeral storage wipes
+  if (isCloudinaryAvailable()) {
+    const publicId = `${accountHex}/${blobName.replaceAll('/', '__')}`;
+    const folder = getCloudinaryFolder();
+    const url = await uploadToCloudinary(publicId, blobData, folder);
+    if (url) {
+      console.log(`[Cloudinary] Blob persisted: ${url}`);
+    }
+  }
 }
 
 export async function uploadDataset(
