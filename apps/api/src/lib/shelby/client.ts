@@ -6,7 +6,7 @@
 // HANDOFF TO TESTER: Verify singleton initialization, env parsing, blob id helpers, and error typing work under mocked SDKs.
 
 import { Account, AccountAddress, Aptos, AptosConfig, Ed25519Account, Ed25519PrivateKey, Network } from '@aptos-labs/ts-sdk';
-import { NetworkToShelbyBlobIndexerBaseUrl, NetworkToShelbyRPCBaseUrl, ShelbyNodeClient } from '@shelby-protocol/sdk/node';
+import { NetworkToDefaultLocationHint, NetworkToShelbyBlobIndexerBaseUrl, NetworkToShelbyRPCBaseUrl, ShelbyNodeClient } from '@shelby-protocol/sdk/node';
 import type { AccessType, DatasetTag, ProvenanceReceipt } from '@verida/shared';
 
 import type { ProvenanceEventType } from '../db/schema.js';
@@ -197,10 +197,19 @@ async function initializeShelbyRuntime(): Promise<ShelbyRuntimeState> {
   const indexerBaseUrl =
     process.env.SHELBY_INDEXER_URL?.trim() || defaultIndexerBaseUrl || undefined;
 
+  // Location hint sent with every blob registration. The shelbynet contract
+  // ABORTS register_blob with E_NO_LOCATION_SELECTED unless a location can be
+  // resolved (account preference, selectedLocation, or this hint) — the SDK
+  // reads it ONLY from the client config, so SHELBY_LOCATION must be wired in
+  // here (it is never auto-defaulted by the SDK).
+  const defaultLocationHint = NetworkToDefaultLocationHint[shelbyClientNetwork] ?? 'shelbynet-1';
+  const locationHint = process.env.SHELBY_LOCATION?.trim() || defaultLocationHint;
+
   const client = new ShelbyNodeClient({
     network: shelbyClientNetwork,
     apiKey,
     deployer: AccountAddress.fromString('0x85fdb9a176ab8ef1d9d9c1b60d60b3924f0800ac1de1cc2085fb0b8bb4988e6a'),
+    locationHint,
     rpc: {
       baseUrl: rpcBaseUrl,
       apiKey,

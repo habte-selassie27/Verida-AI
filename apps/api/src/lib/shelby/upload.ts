@@ -13,6 +13,7 @@ import {
   createBlobKey,
   createDefaultErasureCodingProvider,
   generateCommitments,
+  requiredAckCount,
   SHELBY_DEPLOYER,
   ShelbyBlobClient,
 } from '@shelby-protocol/sdk/node';
@@ -317,6 +318,7 @@ export async function uploadDataset(
     let uploadSignerAddress: string;
     let writeBlobTransactionHash = '';
     let blobCommitments: ShelbyBlobCommitmentsLike | null = null;
+    let erasureN = 16;
     let shelbyAvailable = false;
     let runtime: Awaited<ReturnType<typeof getShelbyRuntime>> | null = null;
 
@@ -335,6 +337,7 @@ export async function uploadDataset(
 
       const aptosClient = await getShelbyAptosClient();
       const provider = await createDefaultErasureCodingProvider();
+      erasureN = provider.config.erasure_n;
       blobCommitments = (await generateCommitments(provider, blobData)) as ShelbyBlobCommitmentsLike;
 
       await emitProgress(options.onProgress, {
@@ -434,13 +437,24 @@ export async function uploadDataset(
         });
       });
 
+      // Fail fast if the storage providers did not ack enough chunksets to
+      // finalize on-chain (erasure_d acks are required by commit_object).
+      const requiredAcks = requiredAckCount(erasureN);
+      if (uploadResult.spAcks.length < requiredAcks) {
+        throw new ShelbyUploadError(
+          `Insufficient storage provider acknowledgements for '${blobName}': ` +
+          `got ${uploadResult.spAcks.length}, need ${requiredAcks} (erasure_d) to finalize on chain.`,
+        );
+      }
+
       // 4. Commit the blob on-chain so it becomes retrievable by name.
+      //    overwrite: true matches the SDK's canonical upload() flow.
       const commit = await runWithTransientRetries(async () => {
         return await runtime!.client.coordination.commitObject({
           account: uploadSigner,
           uid: blobUid,
           blobName,
-          overwrite: false,
+          overwrite: true,
           storageProviderAcks: uploadResult.spAcks,
         });
       });
