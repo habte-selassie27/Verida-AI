@@ -235,12 +235,29 @@ async function verifyLocal(
   expectedMerkleRoot: string,
 ): Promise<{ checkedAt: number; details: Record<string, unknown>; valid: boolean }> {
   const { accountAddress, blobName } = await parseBlobId(blobId);
-  const blobPath = join(LOCAL_BLOBS_DIR, accountAddress, blobName);
 
-  let blobData: Buffer;
-  try {
-    blobData = await readFile(blobPath);
-  } catch {
+  // storeBlobLocally encodes '/' as '__' in filenames. Try the encoded name
+  // first (matches the stored file), then fall back to the raw name.
+  const encodedBlobName = blobName.replaceAll('/', '__');
+  const candidates = encodedBlobName === blobName
+    ? [blobName]
+    : [encodedBlobName, blobName];
+
+  let blobData: Buffer | undefined;
+  let blobPath: string | undefined;
+
+  for (const name of candidates) {
+    const tryPath = join(LOCAL_BLOBS_DIR, accountAddress, name);
+    try {
+      blobData = await readFile(tryPath);
+      blobPath = tryPath;
+      break;
+    } catch {
+      // try next candidate
+    }
+  }
+
+  if (blobData === undefined) {
     // Local file missing (e.g. Render ephemeral storage wiped it). Try to
     // re-download from the Shelby RPC so verification can still succeed.
     try {
@@ -260,7 +277,8 @@ async function verifyLocal(
       }
       blobData = Buffer.concat(chunks);
 
-      // Cache locally so subsequent verifications don't need RPC again
+      // Cache locally using the encoded filename (matches storeBlobLocally)
+      blobPath = join(LOCAL_BLOBS_DIR, accountAddress, encodedBlobName);
       const { mkdir, writeFile } = await import('node:fs/promises');
       await mkdir(join(LOCAL_BLOBS_DIR, accountAddress), { recursive: true });
       await writeFile(blobPath, blobData);
