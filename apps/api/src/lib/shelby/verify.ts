@@ -137,16 +137,78 @@ async function persistTamperEvidence(
   };
 }
 
+async function fetchBlobMetadataViaIndexer(
+  runtime: Awaited<ReturnType<typeof getShelbyRuntime>>,
+  accountAddress: string,
+  blobName: string,
+): Promise<ShelbyBlobMetadataLike | undefined> {
+  try {
+    const blobs = await runtime.client.coordination.getBlobs({
+      where: {
+        owner: { _eq: accountAddress.toLowerCase() },
+        blob_name: { _eq: blobName },
+      },
+      pagination: { limit: 1 },
+    });
+
+    if (!blobs || blobs.length === 0) {
+      return undefined;
+    }
+
+    const blob = blobs[0] as unknown as {
+      blob_commitment?: string;
+      created_at?: number;
+      expires_at?: number;
+      is_written?: boolean;
+      is_deleted?: boolean;
+      size?: number;
+    };
+    return {
+      blobMerkleRoot: blob.blob_commitment,
+      creationMicros: blob.created_at,
+      expirationMicros: blob.expires_at,
+      isWritten: blob.is_written,
+      isDeleted: blob.is_deleted,
+      name: blobName,
+      size: typeof blob.size === 'number' ? blob.size : undefined,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 async function verifyOnChain(
   blobId: string,
   expectedMerkleRoot: string,
 ): Promise<{ checkedAt: number; details: Record<string, unknown>; valid: boolean }> {
   const runtime = await getShelbyRuntime();
   const { accountAddress, blobName } = await parseBlobId(blobId);
-  const metadata = (await runtime.client.coordination.getBlobMetadata({
-    account: accountAddress,
-    name: blobName,
-  })) as ShelbyBlobMetadataLike;
+
+  let metadata: ShelbyBlobMetadataLike | undefined;
+
+  try {
+    metadata = (await runtime.client.coordination.getBlobMetadata({
+      account: accountAddress,
+      name: blobName,
+    })) as ShelbyBlobMetadataLike;
+  } catch (directError: unknown) {
+    const msg = directError instanceof Error ? directError.message : String(directError);
+    if (msg.includes('BigInt') || msg.includes('Cannot convert')) {
+      console.warn(
+        `[Verify] getBlobMetadata failed (SDK BigInt bug), falling back to indexer:`,
+        msg,
+      );
+      metadata = await fetchBlobMetadataViaIndexer(runtime, accountAddress, blobName);
+    } else {
+      throw directError;
+    }
+  }
+
+  if (metadata === undefined) {
+    throw new ShelbyVerificationError(
+      `Blob metadata not found on-chain for ${blobId}. The blob may not have been fully registered.`,
+    );
+  }
 
   const actualMerkleRoot = await extractMerkleRoot(metadata);
   const normalizedExpected = await normalizeMerkleRoot(expectedMerkleRoot);
@@ -179,9 +241,34 @@ async function verifyLocal(
   try {
     blobData = await readFile(blobPath);
   } catch {
-    throw new ShelbyVerificationError(
-      `Blob not found on-chain or locally: ${blobId}`,
-    );
+    // Local file missing (e.g. Render ephemeral storage wiped it). Try to
+    // re-download from the Shelby RPC so verification can still succeed.
+    try {
+      const { getShelbyRuntime } = await import('./client.js');
+      const runtime = await getShelbyRuntime();
+      const { AccountAddress } = await import('@aptos-labs/ts-sdk');
+      const shelbyBlob = await runtime.client.download({
+        account: AccountAddress.fromString(accountAddress),
+        blobName,
+      });
+      const chunks: Uint8Array[] = [];
+      const reader = shelbyBlob.readable.getReader();
+      let result = await reader.read();
+      while (!result.done) {
+        chunks.push(result.value);
+        result = await reader.read();
+      }
+      blobData = Buffer.concat(chunks);
+
+      // Cache locally so subsequent verifications don't need RPC again
+      const { mkdir, writeFile } = await import('node:fs/promises');
+      await mkdir(join(LOCAL_BLOBS_DIR, accountAddress), { recursive: true });
+      await writeFile(blobPath, blobData);
+    } catch {
+      throw new ShelbyVerificationError(
+        `Blob not found on-chain or locally: ${blobId}`,
+      );
+    }
   }
 
   const actualMerkleRoot = createHash('sha256').update(blobData).digest('hex');

@@ -124,11 +124,20 @@ export function createVerifyWorker(): Worker<VerifyIntegrityJobData, VerifyWorke
           datasetId: job.data.datasetId,
         });
 
-        if (cause instanceof Error) {
-          throw cause;
-        }
+        await db
+          .update(datasets)
+          .set({
+            verified: false,
+            tampered: false,
+          })
+          .where(eq(datasets.id, job.data.datasetId));
 
-        throw new VerifyWorkerError(message, { cause });
+        return {
+          checkedAt: Date.now(),
+          datasetId: job.data.datasetId,
+          tampered: false,
+          verified: false,
+        };
       }
     },
     {
