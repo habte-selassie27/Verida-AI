@@ -294,6 +294,16 @@ function ExternalLinkIcon() {
   );
 }
 
+function InfoIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="10" />
+      <line x1="12" y1="16" x2="12" y2="12" />
+      <line x1="12" y1="8" x2="12.01" y2="8" />
+    </svg>
+  );
+}
+
 export default function Upload() {
   const navigate = useNavigate();
   const { address, connected } = useWalletContext();
@@ -311,6 +321,11 @@ export default function Upload() {
   const [accessType, setAccessType] = useState<AccessType>(AccessType.FREE);
   const [price, setPrice] = useState('');
   const [aptPriceUsd, setAptPriceUsd] = useState<number | null>(null);
+  const [priceLastUpdated, setPriceLastUpdated] = useState<Date | null>(null);
+  const [selectedVolumeTab, setSelectedVolumeTab] = useState<10 | 100 | 500 | 'custom'>(100);
+  const [customAccesses, setCustomAccesses] = useState('250');
+  const [calcExpanded, setCalcExpanded] = useState(false);
+  const [annualExpanded, setAnnualExpanded] = useState(false);
 
   const [uploading, setUploading] = useState(false);
   const [uploadPercent, setUploadPercent] = useState(0);
@@ -331,12 +346,22 @@ export default function Upload() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
+  // Live APT reference price, refreshed every 60s so the "Updated X min ago"
+  // footer stays honest.
   useEffect(() => {
     let cancelled = false;
-    getAptPrice()
-      .then((p) => { if (!cancelled) setAptPriceUsd(p); })
-      .catch(() => { if (!cancelled) setAptPriceUsd(null); });
-    return () => { cancelled = true; };
+    const refresh = () => {
+      getAptPrice()
+        .then((p) => {
+          if (cancelled) return;
+          setAptPriceUsd(p);
+          setPriceLastUpdated(new Date());
+        })
+        .catch(() => { if (!cancelled) setAptPriceUsd(null); });
+    };
+    refresh();
+    const timer = setInterval(refresh, 60_000);
+    return () => { cancelled = true; clearInterval(timer); };
   }, []);
 
   // Clear any stale draft from previous sessions on mount
@@ -426,6 +451,22 @@ export default function Upload() {
     setTags((prev) => prev.filter((t) => t !== tag));
   }, []);
 
+  // Scenario calculator derived values (Step 3 pricing).
+  const activeAccesses =
+    selectedVolumeTab === 'custom'
+      ? Math.max(0, Number.parseInt(customAccesses, 10) || 0)
+      : selectedVolumeTab;
+  const priceNum = Number.parseFloat(price) || 0;
+  const grossRevenue = priceNum * activeAccesses;
+  const platformFeePercent = 0; // v1: Verida takes no platform fee
+  const platformFeeApt = (grossRevenue * platformFeePercent) / 100;
+  const creatorRevenue = grossRevenue - platformFeeApt;
+  const creatorRevenueUsd = aptPriceUsd !== null ? creatorRevenue * aptPriceUsd : null;
+  const priceUpdatedMinutes = priceLastUpdated
+    ? Math.max(0, Math.floor((Date.now() - priceLastUpdated.getTime()) / 60_000))
+    : null;
+  const priceStale = priceUpdatedMinutes !== null && priceUpdatedMinutes > 5;
+
   const canGoNext = useCallback((): boolean => {
     if (currentStep === 1) return !!file && !fileHashComputing && !!fileHash;
     if (currentStep === 2) {
@@ -438,10 +479,10 @@ export default function Upload() {
     }
     if (currentStep === 3) {
       if (accessType === AccessType.FREE) return true;
-      return !!price && parseFloat(price) > 0;
+      return !!price && parseFloat(price) > 0 && activeAccesses >= 1;
     }
     return true;
-  }, [currentStep, file, fileHashComputing, fileHash, name, description, accessType, price]);
+  }, [currentStep, file, fileHashComputing, fileHash, name, description, accessType, price, activeAccesses]);
 
   const handleNext = useCallback(() => {
     if (currentStep === 2 && accessType === AccessType.FREE) {
@@ -867,59 +908,223 @@ export default function Upload() {
               </div>
             ) : (
               <div className="pricing-content">
-                <div className="pricing-row">
-                  <label className="input-label">Price per access</label>
-                  <div className="pricing-input-group">
-                    <input
-                      className="pricing-input"
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      placeholder="0"
-                      value={price}
-                      onChange={(e) => setPrice(e.target.value)}
-                    />
-                    <span className="pricing-currency">APT</span>
-                    <span className="pricing-usd">
-                      {price && aptPriceUsd !== null
-                        ? `~$${(parseFloat(price) * aptPriceUsd).toFixed(2)} USD`
-                        : 'USD unavailable'}
+                <div className="pricing-section">
+                  <h3 className="pricing-section-title">Your pricing</h3>
+                  <div className="pricing-row">
+                    <label className="input-label" htmlFor="price-per-access">Price per access</label>
+                    <div className="pricing-input-group">
+                      <input
+                        id="price-per-access"
+                        className={`pricing-input${price && parseFloat(price) <= 0 ? ' pricing-input-error' : ''}`}
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        placeholder="0"
+                        value={price}
+                        onChange={(e) => setPrice(e.target.value)}
+                      />
+                      <span className="pricing-currency">APT</span>
+                      {aptPriceUsd !== null && price && parseFloat(price) > 0 && (
+                        <span
+                          className="pricing-usd"
+                          aria-label={`approximately ${(parseFloat(price) * aptPriceUsd).toFixed(2)} US dollars`}
+                        >
+                          ≈ ${(parseFloat(price) * aptPriceUsd).toFixed(2)} USD
+                        </span>
+                      )}
+                    </div>
+                    {price && parseFloat(price) <= 0 && (
+                      <span className="pricing-error">Price must be greater than 0</span>
+                    )}
+                  </div>
+                  <div className="pricing-info">
+                    <span className="pricing-info-label">Access duration</span>
+                    <span className="pricing-info-value">24 hours (fixed)</span>
+                  </div>
+                  <div className="pricing-info">
+                    <span className="pricing-info-label">Platform fee</span>
+                    <span className="pricing-info-value">0%</span>
+                  </div>
+                </div>
+
+                <Card className="pricing-estimator">
+                  <h3 className="pricing-estimator-title">Scenario-based earnings estimate</h3>
+                  <p className="pricing-disclaimer">
+                    <InfoIcon /> Illustrative calculations based on the access volume you select.
+                    Not a prediction or guarantee of earnings.
+                  </p>
+
+                  <p className="pricing-volume-label">If your dataset receives...</p>
+                  <div className="pricing-tabs" role="tablist" aria-label="Access volume scenario">
+                    {([10, 100, 500] as const).map((v) => (
+                      <button
+                        key={v}
+                        role="tab"
+                        aria-selected={selectedVolumeTab === v}
+                        className={`pricing-tab${selectedVolumeTab === v ? ' pricing-tab-active' : ''}`}
+                        onClick={() => setSelectedVolumeTab(v)}
+                      >
+                        {v}
+                      </button>
+                    ))}
+                    <button
+                      role="tab"
+                      aria-selected={selectedVolumeTab === 'custom'}
+                      className={`pricing-tab${selectedVolumeTab === 'custom' ? ' pricing-tab-active' : ''}`}
+                      onClick={() => setSelectedVolumeTab('custom')}
+                    >
+                      Custom
+                    </button>
+                  </div>
+
+                  {selectedVolumeTab === 'custom' && (
+                    <div className="pricing-custom-row">
+                      <label className="pricing-info-label" htmlFor="custom-accesses">
+                        Monthly accesses
+                      </label>
+                      <input
+                        id="custom-accesses"
+                        className="pricing-input pricing-input-sm"
+                        type="number"
+                        min="1"
+                        max="999999"
+                        value={customAccesses}
+                        onChange={(e) => setCustomAccesses(e.target.value)}
+                        aria-label="Custom monthly accesses"
+                      />
+                    </div>
+                  )}
+
+                  <div className="revenue-card">
+                    <div className="revenue-row">
+                      <span className="revenue-label">Monthly accesses</span>
+                      <span className="revenue-value">
+                        {activeAccesses > 0 ? activeAccesses.toLocaleString() : '—'}
+                      </span>
+                    </div>
+                    <div className="revenue-row">
+                      <span className="revenue-label">× Price per access</span>
+                      <span className="revenue-value">
+                        {priceNum > 0 ? `${priceNum.toFixed(2)} APT` : '—'}
+                      </span>
+                    </div>
+                    <div className="revenue-divider" />
+                    <div className="revenue-row">
+                      <span className="revenue-label">Gross revenue</span>
+                      <span className="revenue-value">
+                        {priceNum > 0 && activeAccesses > 0 ? `${grossRevenue.toFixed(2)} APT` : '—'}
+                      </span>
+                    </div>
+                    <div className="revenue-row">
+                      <span className="revenue-label">Platform fee</span>
+                      <span className="revenue-value">
+                        {priceNum > 0 && activeAccesses > 0
+                          ? `${platformFeeApt.toFixed(2)} APT (${platformFeePercent}%)`
+                          : '—'}
+                      </span>
+                    </div>
+                    <div className="revenue-divider" />
+                    <div className="revenue-row revenue-total">
+                      <span className="revenue-label">Estimated revenue</span>
+                      <span className="revenue-apt">
+                        {priceNum > 0 && activeAccesses > 0
+                          ? `${creatorRevenue.toFixed(2)} APT`
+                          : '—'}
+                        {creatorRevenueUsd !== null && priceNum > 0 && activeAccesses > 0 && (
+                          <span
+                            className="revenue-usd"
+                            aria-label={`approximately ${creatorRevenueUsd.toFixed(2)} US dollars`}
+                          >
+                            ≈ ${creatorRevenueUsd.toFixed(2)} USD
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="pricing-calc">
+                    <button
+                      className="pricing-calc-toggle"
+                      onClick={() => setCalcExpanded((v) => !v)}
+                      aria-expanded={calcExpanded}
+                      aria-controls="pricing-calc-detail"
+                    >
+                      <span className={`pricing-calc-chevron${calcExpanded ? ' pricing-calc-chevron-open' : ''}`}>▶</span>
+                      How is this calculated?
+                    </button>
+                    {calcExpanded && (
+                      <div id="pricing-calc-detail" className="pricing-calc-body">
+                        <div className="pricing-calc-block">
+                          <span className="pricing-calc-caption">Monthly revenue formula</span>
+                          <pre className="pricing-calc-formula">
+                            {`Price per access  ×  Monthly accesses
+= ${priceNum.toFixed(2)} APT          ×  ${activeAccesses}
+= ${grossRevenue.toFixed(2)} APT  (gross revenue)`}
+                          </pre>
+                        </div>
+                        <div className="pricing-calc-block">
+                          <span className="pricing-calc-caption">Creator revenue</span>
+                          <pre className="pricing-calc-formula">
+                            {`Gross revenue  −  Platform fee
+= ${grossRevenue.toFixed(2)} APT     −  ${platformFeeApt.toFixed(2)} APT
+= ${creatorRevenue.toFixed(2)} APT  (estimated creator revenue)`}
+                          </pre>
+                        </div>
+                        <p className="pricing-calc-note">
+                          APT/USD conversion uses the current indicative market price.
+                          Actual USD value will change as the APT market price changes.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  {(selectedVolumeTab === 'custom' || selectedVolumeTab === 500) && (
+                    <div className="pricing-calc">
+                      <button
+                        className="pricing-calc-toggle"
+                        onClick={() => setAnnualExpanded((v) => !v)}
+                        aria-expanded={annualExpanded}
+                        aria-controls="pricing-annual-detail"
+                      >
+                        <span className={`pricing-calc-chevron${annualExpanded ? ' pricing-calc-chevron-open' : ''}`}>▶</span>
+                        Illustrative annual revenue
+                      </button>
+                      {annualExpanded && (
+                        <div id="pricing-annual-detail" className="pricing-calc-body">
+                          <p className="pricing-calc-note">If the same access volume occurs every month:</p>
+                          <pre className="pricing-calc-formula">
+                            {`${creatorRevenue.toFixed(2)} APT/month × 12 = ${(creatorRevenue * 12).toFixed(2)} APT/year`}
+                            {creatorRevenueUsd !== null
+                              ? `\n                        ≈ $${(creatorRevenueUsd * 12).toFixed(2)} USD/year`
+                              : ''}
+                          </pre>
+                          <p className="pricing-calc-warn">
+                            ⚠ This assumes consistent monthly access volume, which is not guaranteed.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="pricing-meta">
+                    <span className="pricing-meta-line">
+                      APT reference price:{' '}
+                      {aptPriceUsd !== null ? `$${aptPriceUsd.toFixed(4)}` : 'unavailable'}
+                      {aptPriceUsd !== null && (
+                        <>
+                          {' '}· Updated {priceUpdatedMinutes} min ago
+                          {priceStale && (
+                            <span className="pricing-meta-stale"> ⚠ Price data may be outdated</span>
+                          )}
+                        </>
+                      )}
+                    </span>
+                    <span className="pricing-meta-line">
+                      Platform fee: 0% · Revenue scenarios are mathematical illustrations,
+                      not demand forecasts or guarantees. Actual earnings depend on the number
+                      of paid accesses and applicable fees.
                     </span>
                   </div>
-                </div>
-                <div className="pricing-info">
-                  <span className="pricing-info-label">Session duration</span>
-                  <span className="pricing-info-value">24 hours (fixed)</span>
-                </div>
-                <Card className="pricing-estimator">
-                  <h3 className="pricing-estimator-title">Earnings estimate (potential)</h3>
-                  <div className="pricing-scenarios">
-                    <div className="pricing-scenario">
-                      <span className="pricing-scenario-count">10</span>
-                      <span className="pricing-scenario-label">accesses/month</span>
-                      <span className="pricing-scenario-earn">
-                        {price ? `${(parseFloat(price) * 10).toFixed(2)} APT` : '—'}
-                        {price && aptPriceUsd !== null && <span className="pricing-scenario-usd"> (~${(parseFloat(price) * 10 * aptPriceUsd).toFixed(2)})</span>}
-                      </span>
-                    </div>
-                    <div className="pricing-scenario">
-                      <span className="pricing-scenario-count">100</span>
-                      <span className="pricing-scenario-label">accesses/month</span>
-                      <span className="pricing-scenario-earn">
-                        {price ? `${(parseFloat(price) * 100).toFixed(2)} APT` : '—'}
-                        {price && aptPriceUsd !== null && <span className="pricing-scenario-usd"> (~${(parseFloat(price) * 100 * aptPriceUsd).toFixed(2)})</span>}
-                      </span>
-                    </div>
-                    <div className="pricing-scenario">
-                      <span className="pricing-scenario-count">500</span>
-                      <span className="pricing-scenario-label">accesses/month</span>
-                      <span className="pricing-scenario-earn">
-                        {price ? `${(parseFloat(price) * 500).toFixed(2)} APT` : '—'}
-                        {price && aptPriceUsd !== null && <span className="pricing-scenario-usd"> (~${(parseFloat(price) * 500 * aptPriceUsd).toFixed(2)})</span>}
-                      </span>
-                    </div>
-                  </div>
-                  <p className="pricing-fee-note">Verida takes 0% platform fee · APT price: {aptPriceUsd !== null ? `$${aptPriceUsd.toFixed(4)}` : 'unavailable'}</p>
                 </Card>
               </div>
             )}
