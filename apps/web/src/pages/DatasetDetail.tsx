@@ -463,14 +463,15 @@ export default function DatasetDetail() {
       await verifyDataset(Number(id));
 
       // Verification runs as an async BullMQ job. Poll the dataset until the
-      // status settles (verified=true or tampered=true), then refresh the view.
+      // status settles (verified=true, tampered=true, or verified=null for
+      // failure), then refresh the view.
       const datasetId = Number(id);
       const deadline = Date.now() + 30000;
       while (Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, 2000));
         const refreshed = await getDataset(datasetId);
         const d = refreshed.dataset;
-        if (d.verified === true || d.tampered === true) {
+        if (d.verified === true || d.tampered === true || d.verified === null) {
           setDetail(refreshed);
           break;
         }
